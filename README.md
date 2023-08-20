@@ -21,7 +21,7 @@ Real-time processing and delivery of sentences from a continuous stream of chara
 ## Installation
 
 ```bash
-$ pip install stream2sentence
+pip install stream2sentence
 ```
 
 ## Usage
