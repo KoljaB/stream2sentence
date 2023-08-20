@@ -42,8 +42,15 @@ for sentence in generate_sentences(dummy_generator()):
     print(sentence)
 ```
 
-One main use case of this library is enable fast text to speech synthesis in the context of character feeds generated from large language models.  
-stream2sentence enables fastest possible access to a complete sentence or sentence fragment (using the quick_yield_single_sentence_fragment flag) that then can be synthesized in realtime.
+This will output:
+```
+This is a sentence.
+And here's another!
+Yet, there's more.
+This ends now.
+```
+
+One main use case of this library is enable fast text to speech synthesis in the context of character feeds generated from large language models: this library enables fastest possible access to a complete sentence or sentence fragment (using the quick_yield_single_sentence_fragment flag) that then can be synthesized in realtime.
 
 ## Configuration
 
