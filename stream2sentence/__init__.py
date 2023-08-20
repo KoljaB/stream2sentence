@@ -1,0 +1,1 @@
+from .stream2sentence import generate_sentences
