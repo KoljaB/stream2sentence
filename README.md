@@ -42,9 +42,15 @@ for sentence in generate_sentences(dummy_generator()):
     print(sentence)
 ```
 
+One main use case of this library is enable fast text to speech synthesis in the context of character feeds generated from large language models.  
+stream2sentence enables fastest possible access to a complete sentence or sentence fragment (using the quick_yield_single_sentence_fragment flag) that then can be synthesized in realtime.
+
 ## Configuration
 
 The `generate_sentences()` function has the following optional parameters:
+
+- `quick_yield_single_sentence_fragment`: Whether to return a sentence fragment as fast as possible.
+  This is a feature for realtime speech synthesis. In some use cases you want to audio stream a minimal chunk of text as fast as possible, even when it means to synthesize mid-sentence. In this case you set this flag to True which will yield a synthesizable sentence fragment as early as possible.
 
 - `context_size`: Context size for sentence detection.  
   This controls how much context is looked at to detect sentence boundaries. It determines the number of characters around a potential delimiter (like a period) that are considered when detecting sentence boundaries. A larger context size allows more reliable sentence boundary detection, but requires buffering more characters before emitting a sentence.  
