@@ -50,18 +50,22 @@ def _remove_emojis(text: str) -> str:
                                "]+", flags=re.UNICODE)
     return emoji_pattern.sub(r'', text)
 
-def _generate_characters(generator: Iterator[str]):
+def _generate_characters(generator: Iterator[str], 
+                         log_characters: bool = False) -> Iterator[str]:
     """
     Generates individual characters from a text generator.
 
     Args:
         generator (Iterator[str]): Input text generator
+        log_characters (bool): Whether to log the characters to the console
 
     Yields:
         Individual characters from the generator
     """
     for chunk in generator:
         for char in chunk:
+            if log_characters:
+                print(char, end="", flush=True)
             yield char
             
 def _clean_text(text: str, 
@@ -82,14 +86,17 @@ def _clean_text(text: str,
         text = _remove_links(text)
     if cleanup_text_emojis:
         text = _remove_emojis(text)
+
+    text = text.strip()
     return text
 
 def generate_sentences(generator: Iterator[str],  
-                       context_size: int = 10,
-                       minimum_sentence_length: int = 8,
+                       context_size: int = 20,
+                       minimum_sentence_length: int = 1,
                        quick_yield_single_sentence_fragment: bool = False,
                        cleanup_text_links: bool = False,
-                       cleanup_text_emojis: bool = False) -> Iterator[str]:
+                       cleanup_text_emojis: bool = False, 
+                       log_characters: bool = False) -> Iterator[str]:
     """
     Generates sentences from a stream of characters or input chunks.
 
@@ -100,6 +107,7 @@ def generate_sentences(generator: Iterator[str],
         quick_yield_single_sentence_fragment (bool): Whether to return a sentence fragment as fast as possible (for realtime speech synthesis)
         cleanup_text_links (boolean, optional): Remove non-desired links from the stream.
         cleanup_text_emojis (boolean, optional): Remove non-desired emojis from the stream. 
+        log_characters (bool): Whether to log the characters to the console
 
     Yields:
         Iterator[str]: Sentences based on input characters  
@@ -110,9 +118,18 @@ def generate_sentences(generator: Iterator[str],
 
     sentence_delimiters = '.?!;:-,\n…)]}'
 
-    for char in _generate_characters(generator):
+    for char in _generate_characters(generator, log_characters):
+
         if char:
             buffer += char
+
+            if is_first_sentence and len(buffer) > 1 and quick_yield_single_sentence_fragment:
+
+                if buffer[-1] in sentence_delimiters:
+                    yield _clean_text(buffer, cleanup_text_links, cleanup_text_emojis)
+                    buffer = ""
+                    is_first_sentence = False
+                    continue
 
             # Check if minimum length reached
             if len(buffer) <= minimum_sentence_length + context_size:
@@ -122,23 +139,23 @@ def generate_sentences(generator: Iterator[str],
             # For reliable sentence detection the engine needs enough context to work with
             delimiter_char = buffer[-context_size]
 
-            sentence_fragment_detected = False
-            if delimiter_char in sentence_delimiters and buffer[-context_size + 1] == ' ':
+            if delimiter_char in sentence_delimiters:
                 
-                # Handle first sentence case
-                if quick_yield_single_sentence_fragment and is_first_sentence:
-                    sentence_fragment_detected = True
-                else:
-                    sentences = nltk.tokenize.sent_tokenize(buffer)
-                    if len(sentences) > 1:
-                        sentence_fragment_detected = True
-                        
-                # Yield sentence
-                if sentence_fragment_detected:
-                    yield _clean_text(buffer[:-context_size + 2], cleanup_text_links, cleanup_text_emojis)
-                    buffer = buffer[-context_size + 2:]
-                    is_first_sentence = False
+                sentences = nltk.tokenize.sent_tokenize(buffer)
+                if len(sentences) > 1:
+                    if len(sentences[0]) == len(buffer) - context_size + 1:
+                        yield _clean_text(buffer[:-context_size + 1], cleanup_text_links, cleanup_text_emojis)
+                        buffer = buffer[-context_size + 1:]
+                        is_first_sentence = False            
 
     # Yield remaining buffer
     if buffer:
-        yield _clean_text(buffer, cleanup_text_links, cleanup_text_emojis)
+        sentences = nltk.tokenize.sent_tokenize(buffer)
+        sentence_buffer = ""
+        for sentence in sentences:
+            sentence_buffer += sentence
+            if len(sentence_buffer) < minimum_sentence_length:
+                sentence_buffer += " "
+                continue
+            yield _clean_text(sentence_buffer, cleanup_text_links, cleanup_text_emojis)
+            sentence_buffer = ""
