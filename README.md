@@ -58,8 +58,8 @@ The `generate_sentences()` function has the following parameters:
   Default is 8 characters. Increasing this avoids emitting very short sentence fragments, at the cost of potentially missing some sentences.
 
 - `quick_yield_single_sentence_fragment`: Yield a sentence fragment quickly for real-time applications.
-When set to True, this option allows the function to quickly yield a sentence fragment as soon as it identifies a potential sentence delimiter, without waiting for further context. This is useful for applications like real-time speech synthesis where there's a need for immediate feedback even if the entire sentence isn't complete.
-Default is False. Set to True for faster but potentially less accurate sentence yields.
+  When set to True, this option allows the function to quickly yield a sentence fragment as soon as it identifies a potential sentence delimiter, without waiting for further context. This is useful for applications like real-time speech synthesis where there's a need for immediate feedback even if the entire sentence isn't complete. 
+  Default is False. Set to True for faster but potentially less accurate sentence yields.
 
 - `cleanup_text_links`: Option to remove links from the output sentences.  
   When set to True, this option enables the function to identify and remove HTTP/HTTPS hyperlinks from the emitted output sentences. This helps clean up the output by avoiding unnecessary links.  
@@ -70,8 +70,8 @@ Default is False. Set to True for faster but potentially less accurate sentence 
   Default is False. Set to True if emojis are not required in the output.
 
 - `log_characters`: Option to log characters to the console.
-When enabled, each character processed by the function is printed to the console. This is mainly for debugging purposes to observe the flow of characters through the function.
-Default is False. Set to True for a visual representation of characters being processed. Example: allows printing llm output to console when using stream2sentence to prepare input generation for text to speech synthesis.
+  When enabled, each character processed by the function is printed to the console. This is mainly for debugging purposes to observe the flow of characters through the function.
+  Default is False. Set to True for a visual representation of characters being processed. Example: allows printing llm output to console when using stream2sentence to prepare input generation for text to speech synthesis.
 
 
 ## Contributing
