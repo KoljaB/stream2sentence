@@ -64,12 +64,16 @@ The `generate_sentences()` function has the following parameters:
 
 - `context_size`: Context size for sentence detection.  
   This controls how much context is looked at to detect sentence boundaries. It determines the number of characters around a potential delimiter (like a period) that are considered when detecting sentence boundaries. A larger context size allows more reliable sentence boundary detection, but requires buffering more characters before emitting a sentence.  
-  Default is 10 characters. Increasing this can help detect sentences more accurately, at the cost of added latency.
+  Default is 12 characters. Increasing this can help detect sentences more accurately, at the cost of added latency.
 
 - `minimum_sentence_length`: Minimum length of a sentence to be detected.  
   Specifies the minimum number of characters a chunk of text should have before it's considered a potential sentence. This ensures that very short sequences of characters are not mistakenly identified as sentences.Shorter fragments are ignored and kept in the buffer.  
-  Default is 8 characters. Increasing this avoids emitting very short sentence fragments, at the cost of potentially missing some sentences.
+  Default is 10 characters. Increasing this avoids emitting very short sentence fragments, at the cost of potentially missing some sentences.
 
+- `minimum_first_fragment_length`: The minimum number of characters required for the first sentence fragment before yielding.
+  This parameter sets a threshold for the length of the initial fragment of text that the function will yield as a sentence. If the first chunk of text does not meet this length requirement, it will be buffered until additional text is received to meet or exceed this threshold. This is important for ensuring the first output is long enough, e.g. to ensure a quality synthesis for text-to-speech applications.
+  Default is 10 characters. Set this according to the needs of the application, balancing between the immediacy of output and the completeness of the text fragment.
+  
 - `quick_yield_single_sentence_fragment`: Yield a sentence fragment quickly for real-time applications.
   When set to True, this option allows the function to quickly yield a sentence fragment as soon as it identifies a potential sentence delimiter, without waiting for further context. This is useful for applications like real-time speech synthesis where there's a need for immediate feedback even if the entire sentence isn't complete. 
   Default is False. Set to True for faster but potentially less accurate sentence yields.

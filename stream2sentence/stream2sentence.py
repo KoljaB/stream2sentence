@@ -69,8 +69,9 @@ def _generate_characters(generator: Iterator[str],
             yield char
             
 def _clean_text(text: str, 
-               cleanup_text_links: bool = False, 
-               cleanup_text_emojis: bool = False) -> str:
+                cleanup_text_links: bool = False, 
+                cleanup_text_emojis: bool = False,
+                strip_text: bool = True) -> str:
     """
     Cleans the text by removing links and emojis.
 
@@ -86,31 +87,35 @@ def _clean_text(text: str,
         text = _remove_links(text)
     if cleanup_text_emojis:
         text = _remove_emojis(text)
-
-    text = text.strip()
+    if strip_text:
+        text = text.strip()                       
     return text
 
 def generate_sentences(generator: Iterator[str],  
-                       context_size: int = 20,
-                       minimum_sentence_length: int = 1,
+                       context_size: int = 12,
+                       minimum_sentence_length: int = 10,
+                       minimum_first_fragment_length = 10,
                        quick_yield_single_sentence_fragment: bool = False,
                        cleanup_text_links: bool = False,
                        cleanup_text_emojis: bool = False, 
                        log_characters: bool = False) -> Iterator[str]:
     """
-    Generates sentences from a stream of characters or input chunks.
+    Generates well-formed sentences from a stream of characters or text chunks provided by an input generator.
 
     Args:
-        generator (Iterator[str]): Input character generator
-        context_size (int): The character context size for sentence detection. A larger context ensures more reliable sentence detection. Default value is 10 characters.
-        minimum_sentence_length (int): Minimum character length for a sentence. Short sentences will combine with the subsequent sentence to enhance synthesis quality. Default value is 8 characters.
-        quick_yield_single_sentence_fragment (bool): Whether to return a sentence fragment as fast as possible (for realtime speech synthesis)
-        cleanup_text_links (boolean, optional): Remove non-desired links from the stream.
-        cleanup_text_emojis (boolean, optional): Remove non-desired emojis from the stream. 
-        log_characters (bool): Whether to log the characters to the console
+        generator (Iterator[str]): A generator that yields chunks of text as a stream of characters.
+        context_size (int): The number of characters used to establish context for sentence boundary detection. A larger context improves the accuracy of detecting sentence boundaries. Default is 12 characters.
+        minimum_sentence_length (int): The minimum number of characters a sentence must have. If a sentence is shorter, it will be concatenated with the following one, improving the overall readability. This parameter does not apply to the first sentence fragment, which is governed by `minimum_first_fragment_length`. Default is 10 characters.
+        minimum_first_fragment_length (int): The minimum number of characters required for the first sentence fragment before yielding. Default is 10 characters.
+        quick_yield_single_sentence_fragment (bool): If set to True, the generator will yield the first sentence fragment as quickly as possible. This is particularly useful for real-time applications such as speech synthesis.
+        cleanup_text_links (bool): If True, removes hyperlinks from the text stream to ensure clean output.
+        cleanup_text_emojis (bool): If True, filters out emojis from the text stream for clear textual content.
+        log_characters (bool): If True, logs each character to the console as they are processed.
 
     Yields:
-        Iterator[str]: Sentences based on input characters  
+        Iterator[str]: An iterator of complete sentences constructed from the input text stream. Each yielded sentence meets the specified minimum length requirements and is cleaned up if specified.
+
+    The function maintains a buffer to accumulate text chunks and applies natural language processing to detect sentence boundaries. It employs various heuristics, such as minimum sentence length and sentence delimiters, to ensure the quality of the output sentences. The function also provides options to clean up the text stream, making it versatile for different types of text processing applications.
     """
     
     buffer = ''
@@ -122,11 +127,13 @@ def generate_sentences(generator: Iterator[str],
 
         if char:
             buffer += char
+            buffer = buffer.lstrip()
 
-            if is_first_sentence and len(buffer) > 1 and quick_yield_single_sentence_fragment:
+            if is_first_sentence and len(buffer) > minimum_first_fragment_length and quick_yield_single_sentence_fragment:
 
                 if buffer[-1] in sentence_delimiters:
-                    yield _clean_text(buffer, cleanup_text_links, cleanup_text_emojis)
+                    yield_text = _clean_text(buffer, cleanup_text_links, cleanup_text_emojis)
+                    yield yield_text
                     buffer = ""
                     is_first_sentence = False
                     continue
@@ -144,9 +151,10 @@ def generate_sentences(generator: Iterator[str],
                 sentences = nltk.tokenize.sent_tokenize(buffer)
                 if len(sentences) > 1:
                     if len(sentences[0]) == len(buffer) - context_size + 1:
-                        yield _clean_text(buffer[:-context_size + 1], cleanup_text_links, cleanup_text_emojis)
+                        yield_text = _clean_text(buffer[:-context_size + 1], cleanup_text_links, cleanup_text_emojis)
+                        yield yield_text
                         buffer = buffer[-context_size + 1:]
-                        is_first_sentence = False            
+                        is_first_sentence = False
 
     # Yield remaining buffer
     if buffer:
@@ -157,5 +165,7 @@ def generate_sentences(generator: Iterator[str],
             if len(sentence_buffer) < minimum_sentence_length:
                 sentence_buffer += " "
                 continue
-            yield _clean_text(sentence_buffer, cleanup_text_links, cleanup_text_emojis)
+            yield_text = _clean_text(sentence_buffer, cleanup_text_links, cleanup_text_emojis)
+            yield yield_text
+
             sentence_buffer = ""

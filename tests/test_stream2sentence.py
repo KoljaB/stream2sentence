@@ -12,7 +12,7 @@ class TestSentenceGenerator(unittest.TestCase):
     def test_hello_world(self):
         text = "Hello, world."
         expected = ["Hello,", "world."]
-        sentences = list(generate_sentences(text, quick_yield_single_sentence_fragment=True, minimum_sentence_length=3))
+        sentences = list(generate_sentences(text, quick_yield_single_sentence_fragment=True, minimum_sentence_length=3, minimum_first_fragment_length=3))
         self.assertEqual(sentences, expected)    
 
     def test_hello_world2(self):
@@ -42,7 +42,25 @@ class TestSentenceGenerator(unittest.TestCase):
     def test_quick_yield(self):
         text = "First, this. Second, this."
         expected = ["First,", "this.", "Second, this."]
-        sentences = list(generate_sentences(text, quick_yield_single_sentence_fragment=True))
+        sentences = list(generate_sentences(text, quick_yield_single_sentence_fragment=True, minimum_sentence_length=3, minimum_first_fragment_length=3))
+        self.assertEqual(sentences, expected)
+
+    def test_quick_yield2(self):
+        text = "First, this. Second, this."
+        expected = ["First,", "this. Second, this."]
+        sentences = list(generate_sentences(text, quick_yield_single_sentence_fragment=True, minimum_sentence_length=6, minimum_first_fragment_length=3))
+        self.assertEqual(sentences, expected)
+
+    def test_quick_yield3(self):
+        text = "First, this. Second, this."
+        expected = ["First, this.", "Second, this."]
+        sentences = list(generate_sentences(text, quick_yield_single_sentence_fragment=True, minimum_sentence_length=3, minimum_first_fragment_length=6))
+        self.assertEqual(sentences, expected)
+
+    def test_quick_yield4(self):
+        text = "First, this. Second, this."
+        expected = ["First, this.", "Second, this."]
+        sentences = list(generate_sentences(text, quick_yield_single_sentence_fragment=True, minimum_sentence_length=6, minimum_first_fragment_length=6))
         self.assertEqual(sentences, expected)
 
     def test_minimum_length1(self):
@@ -73,6 +91,13 @@ class TestSentenceGenerator(unittest.TestCase):
         print ()
         # Check characters were printed
         self.assertTrue(sentences) 
+
+    def test_not_log_characters(self):
+        text = "Do not show these characters." 
+        expected = ["Do not show these characters."]
+        sentences = list(generate_sentences(text, log_characters=False))
+        print(f"\ntest_not_log_characters succeeded, if \"{text}\" was not printed above.")
+        self.assertEqual(sentences, expected)
 
 if __name__ == '__main__':
     unittest.main()
