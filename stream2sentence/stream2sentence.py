@@ -121,7 +121,7 @@ def generate_sentences(generator: Iterator[str],
     buffer = ''
     is_first_sentence = True
 
-    sentence_delimiters = '.?!;:-,\n…)]}'
+    sentence_delimiters = '.?!;:,\n…)]}'
 
     for char in _generate_characters(generator, log_characters):
 
