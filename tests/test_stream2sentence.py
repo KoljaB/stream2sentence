@@ -81,6 +81,18 @@ class TestSentenceGenerator(unittest.TestCase):
         sentences = list(generate_sentences(text, cleanup_text_links=True, cleanup_text_emojis=True))
         self.assertEqual(sentences, expected)
 
+    def test_check1(self):
+        text = "I'll go with a glass of red wine. Thank you." 
+        expected = ["I'll go with a glass of red wine.", "Thank you."]
+        sentences = list(generate_sentences(text, minimum_sentence_length=10, minimum_first_fragment_length=10, quick_yield_single_sentence_fragment=True, cleanup_text_links=True, cleanup_text_emojis=True))
+        self.assertEqual(sentences, expected)
+
+    def test_very_short(self):
+        text = "Excuse me?" 
+        expected = ["Excuse me?"]
+        sentences = list(generate_sentences(text, minimum_sentence_length=18, minimum_first_fragment_length=10, quick_yield_single_sentence_fragment=True, cleanup_text_links=True, cleanup_text_emojis=True))
+        self.assertEqual(sentences, expected)
+
     def test_log_characters(self):
         text = "Hello world"
         print ()
