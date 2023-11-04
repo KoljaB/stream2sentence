@@ -169,3 +169,7 @@ def generate_sentences(generator: Iterator[str],
             yield yield_text
 
             sentence_buffer = ""
+        
+        if sentence_buffer:
+            yield_text = _clean_text(sentence_buffer, cleanup_text_links, cleanup_text_emojis)
+            yield yield_text            
