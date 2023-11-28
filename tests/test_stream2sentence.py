@@ -3,6 +3,21 @@ from stream2sentence import generate_sentences
 
 class TestSentenceGenerator(unittest.TestCase):
 
+    def test_chinese(self):
+        text = "我喜欢读书。天气很好。我们去公园吧。今天是星期五。早上好。这是我的朋友。请帮我。吃饭了吗？我在学中文。晚安。"
+        expected = ["我喜欢读书。", "天气很好。", "我们去公园吧。", "今天是星期五。", "早上好。", "这是我的朋友。", "请帮我。", "吃饭了吗？", "我在学中文。晚安。"]
+        sentences = list(generate_sentences(text, minimum_sentence_length = 2, context_size=2, tokenizer="stanza", language="zh"))
+        self.assertEqual(sentences, expected)    
+
+    def test_generator(self):
+        def generator():
+            yield "Hallo, "
+            yield "wie geht es dir?"
+            yield "Mir geht es gut."
+        expected = ["Hallo,", "wie geht es dir?", "Mir geht es gut."]
+        sentences = list(generate_sentences(generator(), minimum_sentence_length = 3, context_size=5, minimum_first_fragment_length = 3, quick_yield_single_sentence_fragment=True))
+        self.assertEqual(sentences, expected)    
+
     def test_return_incomplete_last(self):
         text = "How I feel? I feel fine"
         expected = ["How I feel?", "I feel fine"]

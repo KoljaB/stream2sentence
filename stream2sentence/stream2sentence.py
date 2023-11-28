@@ -2,20 +2,45 @@
 Real-time processing and delivery of sentences from a continuous stream of characters or text chunks
 """
 
-import re
-import nltk
 from typing import Iterator
+import logging
+import emoji
+import time
+import re
+
+current_tokenizer = "nltk"
+stanza_initialized = False
+nltk_initialized = False
+nlp = None
 
 def initialize_nltk():
     """
     Initializes NLTK by downloading required data for sentence tokenization.
     """
+    global nltk_initialized
+    if nltk_initialized:
+        return
+    print ("Starting tokenizer nltk")
+    import nltk
     try:
         _ = nltk.data.find('tokenizers/punkt') 
     except LookupError:
         nltk.download('punkt')
+    nltk_initialized = True
 
-initialize_nltk()
+def initialize_stanza(language: str = "en"):
+    """
+    Initializes Stanza by downloading required data for sentence tokenization.
+    """
+    global stanza_initialized
+    if stanza_initialized:
+        return
+    print (f"Starting tokenizer stanza with language {language}")
+    import stanza
+    global nlp
+    stanza.download(language)
+    nlp = stanza.Pipeline(language)
+    stanza_initialized = True
 
 def _remove_links(text: str) -> str:
     """
@@ -40,15 +65,7 @@ def _remove_emojis(text: str) -> str:
     Returns:
         str: Text with emojis removed
     """
-    emoji_pattern = re.compile("["
-                               u"\U0001F600-\U0001F64F" 
-                               u"\U0001F300-\U0001F5FF"
-                               u"\U0001F680-\U0001F6FF" 
-                               u"\U0001F1E0-\U0001F1FF"
-                               u"\U00002702-\U000027B0"  
-                               u"\U000024C2-\U0001F251"
-                               "]+", flags=re.UNICODE)
-    return emoji_pattern.sub(r'', text)
+    return emoji.replace_emoji(text, u'')
 
 def _generate_characters(generator: Iterator[str], 
                          log_characters: bool = False) -> Iterator[str]:
@@ -91,6 +108,44 @@ def _clean_text(text: str,
         text = text.strip()                       
     return text
 
+def _tokenize_sentences(text: str, tokenize_sentences = None) -> Iterator[str]:
+    """
+    Tokenizes sentences from the input text.
+
+    Args:
+        text (str): Input text
+        tokenize_sentences (Callable, optional): A function that tokenizes sentences from the input text. Defaults to None.
+
+    Yields:
+        Iterator[str]: An iterator of sentences        
+    """
+    if tokenize_sentences:
+        sentences = tokenize_sentences(text)
+    else:
+        nlp_start_time = time.time()
+        if current_tokenizer == "nltk":
+            import nltk
+            sentences = nltk.tokenize.sent_tokenize(text)
+        elif current_tokenizer == "stanza":
+            import stanza
+            global nlp
+            doc = nlp(text)
+            sentences = [sentence.text for sentence in doc.sentences]
+        else:
+            raise ValueError(f"Unknown tokenizer: {current_tokenizer}")
+        nlp_end_time = time.time()        
+        logging.info(f"Time to split sentences: {nlp_end_time - nlp_start_time}")
+    return sentences
+
+def _init_tokenizer(language: str = "en"):
+    """
+    Initializes the sentence tokenizer.
+    """
+    if current_tokenizer == "nltk":
+        initialize_nltk()
+    elif current_tokenizer == "stanza":
+        initialize_stanza(language)
+
 def generate_sentences(generator: Iterator[str],  
                        context_size: int = 12,
                        minimum_sentence_length: int = 10,
@@ -98,6 +153,9 @@ def generate_sentences(generator: Iterator[str],
                        quick_yield_single_sentence_fragment: bool = False,
                        cleanup_text_links: bool = False,
                        cleanup_text_emojis: bool = False, 
+                       tokenize_sentences = None,
+                       tokenizer: str = "nltk",
+                       language: str = "en",
                        log_characters: bool = False) -> Iterator[str]:
     """
     Generates well-formed sentences from a stream of characters or text chunks provided by an input generator.
@@ -117,11 +175,15 @@ def generate_sentences(generator: Iterator[str],
 
     The function maintains a buffer to accumulate text chunks and applies natural language processing to detect sentence boundaries. It employs various heuristics, such as minimum sentence length and sentence delimiters, to ensure the quality of the output sentences. The function also provides options to clean up the text stream, making it versatile for different types of text processing applications.
     """
-    
+
+    global current_tokenizer
+    current_tokenizer = tokenizer
+    _init_tokenizer(language)
+
     buffer = ''
     is_first_sentence = True
 
-    sentence_delimiters = '.?!;:,\n…)]}'
+    sentence_delimiters = '.?!;:,\n…)]}。'
 
     for char in _generate_characters(generator, log_characters):
 
@@ -146,9 +208,8 @@ def generate_sentences(generator: Iterator[str],
             # For reliable sentence detection the engine needs enough context to work with
             delimiter_char = buffer[-context_size]
 
-            if delimiter_char in sentence_delimiters:
-                
-                sentences = nltk.tokenize.sent_tokenize(buffer)
+            if delimiter_char in sentence_delimiters:                
+                sentences = _tokenize_sentences(buffer, tokenize_sentences)
                 if len(sentences) > 1:
                     if len(sentences[0]) == len(buffer) - context_size + 1:
                         yield_text = _clean_text(buffer[:-context_size + 1], cleanup_text_links, cleanup_text_emojis)
@@ -158,8 +219,9 @@ def generate_sentences(generator: Iterator[str],
 
     # Yield remaining buffer
     if buffer:
-        sentences = nltk.tokenize.sent_tokenize(buffer)
+        sentences = _tokenize_sentences(buffer, tokenize_sentences)
         sentence_buffer = ""
+
         for sentence in sentences:
             sentence_buffer += sentence
             if len(sentence_buffer) < minimum_sentence_length:
@@ -172,4 +234,4 @@ def generate_sentences(generator: Iterator[str],
         
         if sentence_buffer:
             yield_text = _clean_text(sentence_buffer, cleanup_text_links, cleanup_text_emojis)
-            yield yield_text            
+            yield yield_text
