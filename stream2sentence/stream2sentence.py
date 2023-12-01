@@ -20,7 +20,9 @@ def initialize_nltk():
     global nltk_initialized
     if nltk_initialized:
         return
-    print ("Starting tokenizer nltk")
+    
+    logging.info("Initializing NLTK")
+
     import nltk
     try:
         _ = nltk.data.find('tokenizers/punkt') 
@@ -32,12 +34,13 @@ def initialize_stanza(language: str = "en"):
     """
     Initializes Stanza by downloading required data for sentence tokenization.
     """
-    global stanza_initialized
+    global nlp, stanza_initialized
     if stanza_initialized:
         return
-    print (f"Starting tokenizer stanza with language {language}")
+    
+    logging.info("Initializing Stanza")
+
     import stanza
-    global nlp
     stanza.download(language)
     nlp = stanza.Pipeline(language)
     stanza_initialized = True
