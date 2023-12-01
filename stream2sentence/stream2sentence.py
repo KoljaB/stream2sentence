@@ -140,14 +140,16 @@ def _tokenize_sentences(text: str, tokenize_sentences = None) -> Iterator[str]:
         logging.info(f"Time to split sentences: {nlp_end_time - nlp_start_time}")
     return sentences
 
-def _init_tokenizer(language: str = "en"):
+def init_tokenizer(tokenizer: str, language: str = "en"):
     """
     Initializes the sentence tokenizer.
     """
-    if current_tokenizer == "nltk":
+    if tokenizer == "nltk":
         initialize_nltk()
-    elif current_tokenizer == "stanza":
+    elif tokenizer == "stanza":
         initialize_stanza(language)
+    else:
+        logging.warning(f"Unknown tokenizer: {tokenizer}")
 
 def generate_sentences(generator: Iterator[str],  
                        context_size: int = 12,
@@ -181,7 +183,7 @@ def generate_sentences(generator: Iterator[str],
 
     global current_tokenizer
     current_tokenizer = tokenizer
-    _init_tokenizer(language)
+    init_tokenizer(current_tokenizer, language)
 
     buffer = ''
     is_first_sentence = True

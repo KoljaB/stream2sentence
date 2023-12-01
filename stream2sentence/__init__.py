@@ -1,1 +1,1 @@
-from .stream2sentence import generate_sentences
+from .stream2sentence import generate_sentences, init_tokenizer
