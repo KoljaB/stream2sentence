@@ -59,9 +59,6 @@ The `generate_sentences()` function has the following parameters:
 - `generator`: Input character generator.
   Iterator that emits chunks of text. These chunks can be of any size, and they'll be processed one by one to extract sentences from them. It forms the primary source from which the function reads and generates sentences.
 
-- `quick_yield_single_sentence_fragment`: Whether to return a sentence fragment as fast as possible.  
-  This is a feature for realtime speech synthesis. In some use cases you want to audio stream a minimal chunk of text as fast as possible, even when it means to synthesize mid-sentence. In this case you set this flag to True which will yield a synthesizable sentence fragment as early as possible.
-
 - `context_size`: Context size for sentence detection.  
   This controls how much context is looked at to detect sentence boundaries. It determines the number of characters around a potential delimiter (like a period) that are considered when detecting sentence boundaries. A larger context size allows more reliable sentence boundary detection, but requires buffering more characters before emitting a sentence.  
   Default is 12 characters. Increasing this can help detect sentences more accurately, at the cost of added latency.
@@ -85,6 +82,18 @@ The `generate_sentences()` function has the following parameters:
 - `cleanup_text_emojis`: Option to remove emojis from the output sentences.  
   If True, any Unicode emoji characters are identified and removed from the emitted output sentences. This can help to clean up the output.  
   Default is False. Set to True if emojis are not required in the output.
+
+- `tokenize_sentences`: (Optional) Function for sentence tokenization. Default is None.
+
+- `tokenizer`: Specifies the tokenizer to use ('nltk' or 'stanza'). Default is 'nltk'.
+
+- `language`: Language setting for the tokenizer ('en' or 'multilingual' for stanza). Default is 'en'.
+
+- `log_characters`: Logs each processed character to the console for debugging. Default is False.
+
+- `sentence_fragment_delimiters`: Characters considered as sentence delimiters for yielding quick fragment.
+
+- `force_first_fragment_after_words`: Forces the first sentence fragment to yield after a specified number of words. Default is 10 words.
 
 - `log_characters`: Option to log characters to the console.
   When enabled, each character processed by the function is printed to the console. This is mainly for debugging purposes to observe the flow of characters through the function.
