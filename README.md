@@ -2,6 +2,8 @@
 
 Real-time processing and delivery of sentences from a continuous stream of characters or text chunks.
 
+> **Hint:** *If you're interested in state-of-the-art voice solutions you might also want to <strong>have a look at [Linguflex](https://github.com/KoljaB/Linguflex)</strong>, the original project from which stream2sentence is spun off. It lets you control your environment by speaking and is one of the most capable and sophisticated open-source assistants currently available.*
+
 ## Table of Contents
 
 - [Features](#features)
