@@ -92,11 +92,15 @@ def _generate_characters(generator: Iterator[str],
     Yields:
         Individual characters from the generator
     """
+    if log_characters:
+        print("Stream: ", end="", flush=True)
     for chunk in generator:
         for char in chunk:
             if log_characters:
                 print(char, end="", flush=True)
             yield char
+    if log_characters:
+        print()
 
 
 def _clean_text(text: str,
@@ -284,14 +288,11 @@ def generate_sentences(generator: Iterator[str],
             if delimiter_char in sentence_fragment_delimiters:
                 sentences = _tokenize_sentences(buffer, tokenize_sentences)
                 if len(sentences) > 1:
-                    if len(sentences[0]) == len(buffer) - context_size + 1:
-                        yield_text = _clean_text(
-                            buffer[:-context_size + 1],
-                            cleanup_text_links,
-                            cleanup_text_emojis)
-                        yield yield_text
-                        buffer = buffer[-context_size + 1:]
-                        is_first_sentence = False
+                    total_length_except_first = sum(len(sentence) for sentence in sentences[1:])
+                    if total_length_except_first >= context_size:
+                        for sentence in sentences[:-1]:
+                            yield sentence
+                        buffer = sentences[-1]
 
     # Yield remaining buffer
     if buffer:
