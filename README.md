@@ -56,51 +56,102 @@ One main use case of this library is enable fast text to speech synthesis in the
 
 ## Configuration
 
-The `generate_sentences()` function has the following parameters:
+The `generate_sentences()` function offers various parameters to fine-tune its behavior:
 
-- `generator`: Input character generator.
-  Iterator that emits chunks of text. These chunks can be of any size, and they'll be processed one by one to extract sentences from them. It forms the primary source from which the function reads and generates sentences.
+### Core Parameters
 
-- `context_size`: Context size for sentence detection.  
-  This controls how much context is looked at to detect sentence boundaries. It determines the number of characters around a potential delimiter (like a period) that are considered when detecting sentence boundaries. A larger context size allows more reliable sentence boundary detection, but requires buffering more characters before emitting a sentence.  
-  Default is 12 characters. Increasing this can help detect sentences more accurately, at the cost of added latency.
+- `generator: Iterator[str]`
+  - The primary input source, yielding chunks of text to be processed.
+  - Can be any iterator that emits text chunks of any size.
 
-- `minimum_sentence_length`: Minimum length of a sentence to be detected.  
-  Specifies the minimum number of characters a chunk of text should have before it's considered a potential sentence. This ensures that very short sequences of characters are not mistakenly identified as sentences.Shorter fragments are ignored and kept in the buffer.  
-  Default is 10 characters. Increasing this avoids emitting very short sentence fragments, at the cost of potentially missing some sentences.
+- `context_size: int = 12`
+  - Number of characters considered for sentence boundary detection.
+  - Larger values improve accuracy but may increase latency.
+  - Default: 12 characters
 
-- `minimum_first_fragment_length`: The minimum number of characters required for the first sentence fragment before yielding.
-  This parameter sets a threshold for the length of the initial fragment of text that the function will yield as a sentence. If the first chunk of text does not meet this length requirement, it will be buffered until additional text is received to meet or exceed this threshold. This is important for ensuring the first output is long enough, e.g. to ensure a quality synthesis for text-to-speech applications.
-  Default is 10 characters. Set this according to the needs of the application, balancing between the immediacy of output and the completeness of the text fragment.
-  
-- `quick_yield_single_sentence_fragment`: Yield a sentence fragment quickly for real-time applications.
-  When set to True, this option allows the function to quickly yield a sentence fragment as soon as it identifies a potential sentence delimiter, without waiting for further context. This is useful for applications like real-time speech synthesis where there's a need for immediate feedback even if the entire sentence isn't complete. 
-  Default is False. Set to True for faster but potentially less accurate sentence yields.
+- `context_size_look_overhead: int = 12`
+  - Additional characters to examine beyond `context_size` for sentence splitting.
+  - Enhances sentence detection accuracy.
+  - Default: 12 characters
 
-- `cleanup_text_links`: Option to remove links from the output sentences.  
-  When set to True, this option enables the function to identify and remove HTTP/HTTPS hyperlinks from the emitted output sentences. This helps clean up the output by avoiding unnecessary links.  
-  Default is False. Set to True if links are not required in the output.
+- `minimum_sentence_length: int = 10`
+  - Minimum character count for a text chunk to be considered a sentence.
+  - Shorter fragments are buffered until this threshold is met.
+  - Default: 10 characters
 
-- `cleanup_text_emojis`: Option to remove emojis from the output sentences.  
-  If True, any Unicode emoji characters are identified and removed from the emitted output sentences. This can help to clean up the output.  
-  Default is False. Set to True if emojis are not required in the output.
+- `minimum_first_fragment_length: int = 10`
+  - Minimum character count required for the first sentence fragment.
+  - Ensures the initial output meets a specified length threshold.
+  - Default: 10 characters
 
-- `tokenize_sentences`: (Optional) Function for sentence tokenization. Default is None.
+### Yield Control
 
-- `tokenizer`: Specifies the tokenizer to use ('nltk' or 'stanza'). Default is 'nltk'.
+These parameters control how quickly and frequently the generator yields sentence fragments:
 
-- `language`: Language setting for the tokenizer ('en' or 'multilingual' for stanza). Default is 'en'.
+- `quick_yield_single_sentence_fragment: bool = False`
+  - When True, yields the first fragment of the first sentence as quickly as possible.
+  - Useful for getting immediate output in real-time applications like speech synthesis.
+  - Default: False
 
-- `log_characters`: Logs each processed character to the console for debugging. Default is False.
+- `quick_yield_for_all_sentences: bool = False`
+  - When True, yields the first fragment of every sentence as quickly as possible.
+  - Extends the quick yield behavior to all sentences, not just the first one.
+  - Automatically sets `quick_yield_single_sentence_fragment` to True.
+  - Default: False
 
-- `sentence_fragment_delimiters`: Characters considered as sentence delimiters for yielding quick fragment.
+- `quick_yield_every_fragment: bool = False`
+  - When True, yields every fragment of every sentence as quickly as possible.
+  - Provides the most granular output, yielding fragments as soon as they're detected.
+  - Automatically sets both `quick_yield_for_all_sentences` and `quick_yield_single_sentence_fragment` to True.
+  - Default: False
 
-- `force_first_fragment_after_words`: Forces the first sentence fragment to yield after a specified number of words. Default is 10 words.
+### Text Cleanup
 
-- `log_characters`: Option to log characters to the console.
-  When enabled, each character processed by the function is printed to the console. This is mainly for debugging purposes to observe the flow of characters through the function.
-  Default is False. Set to True for a visual representation of characters being processed. Example: allows printing llm output to console when using stream2sentence to prepare input generation for text to speech synthesis.
+- `cleanup_text_links: bool = False`
+  - When True, removes hyperlinks from the output sentences.
+  - Default: False
 
+- `cleanup_text_emojis: bool = False`
+  - When True, removes emoji characters from the output sentences.
+  - Default: False
+
+### Tokenization
+
+- `tokenize_sentences: Callable = None`
+  - Custom function for sentence tokenization.
+  - If None, uses the default tokenizer specified by `tokenizer`.
+  - Default: None
+
+- `tokenizer: str = "nltk"`
+  - Specifies the tokenizer to use. Options: "nltk" or "stanza"
+  - Default: "nltk"
+
+- `language: str = "en"`
+  - Language setting for the tokenizer.
+  - Use "en" for English or "multilingual" for Stanza tokenizer.
+  - Default: "en"
+
+### Debugging and Fine-tuning
+
+- `log_characters: bool = False`
+  - When True, logs each processed character to the console.
+  - Useful for debugging or monitoring real-time processing.
+  - Default: False
+
+- `sentence_fragment_delimiters: str = ".?!;:,\n…)]}。-"`
+  - Characters considered as potential sentence fragment delimiters.
+  - Used for quick yielding of sentence fragments.
+  - Default: ".?!;:,\n…)]}。-"
+
+- `full_sentence_delimiters: str = ".?!\n…。"`
+  - Characters considered as full sentence delimiters.
+  - Used for more definitive sentence boundary detection.
+  - Default: ".?!\n…。"
+
+- `force_first_fragment_after_words: int = 15`
+  - Forces the yield of the first sentence fragment after this many words.
+  - Ensures timely output even with long opening sentences.
+  - Default: 15 words
 
 ## Contributing
 

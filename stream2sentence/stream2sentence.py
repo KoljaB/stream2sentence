@@ -175,9 +175,12 @@ def init_tokenizer(tokenizer: str, language: str = "en"):
 
 def generate_sentences(generator: Iterator[str],
                        context_size: int = 12,
+                       context_size_look_overhead: int = 12,
                        minimum_sentence_length: int = 10,
                        minimum_first_fragment_length=10,
                        quick_yield_single_sentence_fragment: bool = False,
+                       quick_yield_for_all_sentences: bool = False,
+                       quick_yield_every_fragment : bool = False,
                        cleanup_text_links: bool = False,
                        cleanup_text_emojis: bool = False,
                        tokenize_sentences=None,
@@ -185,6 +188,7 @@ def generate_sentences(generator: Iterator[str],
                        language: str = "en",
                        log_characters: bool = False,
                        sentence_fragment_delimiters: str = ".?!;:,\n…)]}。-",
+                       full_sentence_delimiters: str = ".?!\n…。",                       
                        force_first_fragment_after_words=15,
                        ) -> Iterator[str]:
     """
@@ -198,6 +202,9 @@ def generate_sentences(generator: Iterator[str],
           for sentence boundary detection. A larger context improves the
           accuracy of detecting sentence boundaries.
           Default is 12 characters.
+        context_size_look_overhead: The number of characters to look
+          over the context_size boundaries to detect sentence splitting
+          characters (improves sentence detection).
         minimum_sentence_length (int): The minimum number of characters a
           sentence must have. If a sentence is shorter, it will be
           concatenated with the following one, improving the overall
@@ -208,9 +215,15 @@ def generate_sentences(generator: Iterator[str],
           required for the first sentence fragment before yielding.
           Default is 10 characters.
         quick_yield_single_sentence_fragment (bool): If set to True, the
-          generator will yield the first sentence fragment as quickly as
+          generator will yield the first sentence first fragment as quickly as
           possible. This is particularly useful for real-time applications
           such as speech synthesis.
+        quick_yield_for_all_sentences (bool): If set to True, the
+          generator will yield every sentence first fragment as quickly as
+          possible (not only the first sentence first fragment)
+        quick_yield_every_fragment (bool): If set to True, the
+          generator not only yield every sentence first fragment, but also every
+          following fragment.
         cleanup_text_links (bool): If True, removes hyperlinks from the text
           stream to ensure clean output.
         cleanup_text_emojis (bool): If True, filters out emojis from the text
@@ -224,7 +237,9 @@ def generate_sentences(generator: Iterator[str],
         log_characters (bool): If True, logs each character to the console as
           they are processed.
         sentence_fragment_delimiters (str): A string of characters that are
-          considered sentence delimiters. Default is ".?!;:,\n…)]}。-".
+          considered sentence fragment delimiters. Default is ".?!;:,\n…)]}。-".
+        full_sentence_delimiters (str): A string of characters that are
+          considered full sentence delimiters. Default is ".?!\n…。".
         force_first_fragment_after_words (int): The number of words after
           which the first sentence fragment is forced to be yielded.
           Default is 15 words.
@@ -249,6 +264,13 @@ def generate_sentences(generator: Iterator[str],
     buffer = ''
     is_first_sentence = True
     word_count = 0  # Initialize word count
+    last_delimiter_position = -1
+
+    if quick_yield_every_fragment:
+        quick_yield_for_all_sentences = True
+
+    if quick_yield_for_all_sentences:
+        quick_yield_single_sentence_fragment = True
 
     for char in _generate_characters(generator, log_characters):
 
@@ -273,26 +295,44 @@ def generate_sentences(generator: Iterator[str],
                         cleanup_text_emojis)
                     yield yield_text
                     buffer = ""
-                    is_first_sentence = False
+                    if not quick_yield_every_fragment:
+                        is_first_sentence = False
                     continue
 
             # Check if minimum length reached
             if len(buffer) <= minimum_sentence_length + context_size:
                 continue
 
-            # Potential delimiter character has to be a bit away from the end
-            # of the buffer. For reliable sentence detection the engine needs
-            # enough context to work with
-            delimiter_char = buffer[-context_size]
+            # Update last delimiter position if a new delimiter is found
+            if char in full_sentence_delimiters:
+                last_delimiter_position = len(buffer) - 1
 
-            if delimiter_char in sentence_fragment_delimiters:
-                sentences = _tokenize_sentences(buffer, tokenize_sentences)
+            # Check for potential sentence boundaries
+            context_window_end_pos = len(buffer) - context_size - 1
+            context_window_start_pos = context_window_end_pos - context_size_look_overhead
+            if context_window_start_pos < 0:
+                context_window_start_pos = 0
+
+            sentences = _tokenize_sentences(buffer, tokenize_sentences)
+
+            if (len(sentences) > 2 or 
+                (last_delimiter_position >= 0 and 
+                context_window_start_pos <= last_delimiter_position <= context_window_end_pos)
+                ):
+                
                 if len(sentences) > 1:
-                    total_length_except_first = sum(len(sentence) for sentence in sentences[1:])
-                    if total_length_except_first >= context_size:
+                    total_length_except_last = sum(len(sentence) for sentence in sentences[:-1])
+                    if total_length_except_last >= minimum_sentence_length:
                         for sentence in sentences[:-1]:
-                            yield sentence
+                            yield_text = _clean_text(
+                                sentence,
+                                cleanup_text_links,
+                                cleanup_text_emojis)
+                            yield yield_text
+                        if quick_yield_for_all_sentences:
+                            is_first_sentence = True
                         buffer = sentences[-1]
+                        last_delimiter_position = -1  # Reset after yielding                            
 
     # Yield remaining buffer
     if buffer:
