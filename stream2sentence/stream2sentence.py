@@ -3,10 +3,20 @@ Real-time processing and delivery of sentences
 from a continuous stream of characters or text chunks
 """
 
+import functools
 import logging
 import re
 import time
-from typing import Iterator
+from typing import (
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Concatenate,
+    Iterable,
+    Iterator,
+    ParamSpec,
+)
 
 import emoji
 
@@ -83,9 +93,9 @@ def _remove_emojis(text: str) -> str:
     return emoji.replace_emoji(text, "")
 
 
-def _generate_characters(
-    generator: Iterator[str], log_characters: bool = False
-) -> Iterator[str]:
+async def _generate_characters(
+    generator: AsyncIterable[str], log_characters: bool = False
+) -> AsyncIterator[str]:
     """
     Generates individual characters from a text generator.
 
@@ -98,7 +108,7 @@ def _generate_characters(
     """
     if log_characters:
         print("Stream: ", end="", flush=True)
-    for chunk in generator:
+    async for chunk in generator:
         for char in chunk:
             if log_characters:
                 print(char, end="", flush=True)
@@ -135,7 +145,7 @@ def _clean_text(
     return text
 
 
-def _tokenize_sentences(text: str, tokenize_sentences=None) -> Iterator[str]:
+def _tokenize_sentences(text: str, tokenize_sentences=None) -> list[str]:
     """
     Tokenizes sentences from the input text.
 
@@ -180,8 +190,8 @@ def init_tokenizer(tokenizer: str, language: str = "en"):
         logging.warning(f"Unknown tokenizer: {tokenizer}")
 
 
-def generate_sentences(
-    generator: Iterator[str],
+async def generate_sentences_async(
+    generator: AsyncIterable[str],
     context_size: int = 12,
     context_size_look_overhead: int = 12,
     minimum_sentence_length: int = 10,
@@ -198,7 +208,7 @@ def generate_sentences(
     sentence_fragment_delimiters: str = ".?!;:,\n…)]}。-",
     full_sentence_delimiters: str = ".?!\n…。",
     force_first_fragment_after_words=15,
-) -> Iterator[str]:
+) -> AsyncIterator[str]:
     """
     Generates well-formed sentences from a stream of characters or text chunks
       provided by an input generator.
@@ -280,7 +290,7 @@ def generate_sentences(
     if quick_yield_for_all_sentences:
         quick_yield_single_sentence_fragment = True
 
-    for char in _generate_characters(generator, log_characters):
+    async for char in _generate_characters(generator, log_characters):
 
         if char:
             buffer += char
@@ -372,3 +382,42 @@ def generate_sentences(
                 sentence_buffer, cleanup_text_links, cleanup_text_emojis
             )
             yield yield_text
+
+
+def _await_sync(f: Awaitable[str]) -> str:
+    gen = f.__await__()
+    try:
+        next(gen)
+        raise RuntimeError(f"{f} failed to be synchronous")
+    except StopIteration as e:
+        return e.value
+
+
+def _async_iter_to_sync(f: AsyncIterator[str]) -> Iterator[str]:
+    try:
+        while True:
+            yield _await_sync(f.__anext__())
+    except StopAsyncIteration:
+        return
+
+
+P = ParamSpec("P")
+
+
+def _dowrap(
+    f: Callable[Concatenate[AsyncIterable[str], P], AsyncIterator[str]]
+) -> Callable[Concatenate[Iterable[str], P], Iterator[str]]:
+    @functools.wraps(f)
+    def inner(generator: Iterable[str], *args: P.args, **kwargs: P.kwargs):
+        async def gen_wrap():
+            for x in generator:
+                yield x
+
+        return _async_iter_to_sync(f(gen_wrap(), *args, **kwargs))
+
+    return inner
+
+
+generate_sentences = _dowrap(generate_sentences_async)
+generate_sentences.__name__ = "generate_sentences"
+generate_sentences.__qualname__ = "generate_sentences"
