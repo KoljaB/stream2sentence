@@ -33,7 +33,7 @@ def initialize_nltk():
     nltk_initialized = True
 
 
-def initialize_stanza(language: str = "en"):
+def initialize_stanza(language: str = "en", offline=False):
     """
     Initializes Stanza by downloading required data for sentence tokenization.
     """
@@ -44,8 +44,9 @@ def initialize_stanza(language: str = "en"):
     logging.info("Initializing Stanza")
 
     import stanza
-    stanza.download(language)
-    nlp = stanza.Pipeline(language)
+    if not offline:
+        stanza.download(language)
+    nlp = stanza.Pipeline(language, download_method=None)
     stanza_initialized = True
 
 
