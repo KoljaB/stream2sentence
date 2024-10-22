@@ -162,14 +162,14 @@ def _tokenize_sentences(text: str, tokenize_sentences=None) -> Iterator[str]:
     return sentences
 
 
-def init_tokenizer(tokenizer: str, language: str = "en"):
+def init_tokenizer(tokenizer: str, language: str = "en", offline=False):
     """
     Initializes the sentence tokenizer.
     """
     if tokenizer == "nltk":
         initialize_nltk()
     elif tokenizer == "stanza":
-        initialize_stanza(language)
+        initialize_stanza(language,offline=offline)
     else:
         logging.warning(f"Unknown tokenizer: {tokenizer}")
 
