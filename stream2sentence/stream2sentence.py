@@ -45,7 +45,7 @@ def initialize_nltk():
     nltk_initialized = True
 
 
-def initialize_stanza(language: str = "en"):
+def initialize_stanza(language: str = "en", offline=False):
     """
     Initializes Stanza by downloading required data for sentence tokenization.
     """
@@ -57,8 +57,10 @@ def initialize_stanza(language: str = "en"):
 
     import stanza
 
-    stanza.download(language)
-    nlp = stanza.Pipeline(language)
+    if not offline:
+        stanza.download(language)
+
+    nlp = stanza.Pipeline(language, download_method=None)
     stanza_initialized = True
 
 
@@ -178,14 +180,14 @@ def _tokenize_sentences(text: str, tokenize_sentences=None) -> list[str]:
     return sentences
 
 
-def init_tokenizer(tokenizer: str, language: str = "en"):
+def init_tokenizer(tokenizer: str, language: str = "en", offline=False):
     """
     Initializes the sentence tokenizer.
     """
     if tokenizer == "nltk":
         initialize_nltk()
     elif tokenizer == "stanza":
-        initialize_stanza(language)
+        initialize_stanza(language,offline=offline)
     else:
         logging.warning(f"Unknown tokenizer: {tokenizer}")
 
@@ -208,6 +210,7 @@ async def generate_sentences_async(
     sentence_fragment_delimiters: str = ".?!;:,\n…)]}。-",
     full_sentence_delimiters: str = ".?!\n…。",
     force_first_fragment_after_words=15,
+    debug_mode=False,
 ) -> AsyncIterator[str]:
     """
     Generates well-formed sentences from a stream of characters or text chunks
@@ -261,6 +264,7 @@ async def generate_sentences_async(
         force_first_fragment_after_words (int): The number of words after
           which the first sentence fragment is forced to be yielded.
           Default is 15 words.
+        debug_mode (bool): If True, enables debug mode for logging.
 
     Yields:
         Iterator[str]: An iterator of complete sentences constructed from the
@@ -275,6 +279,7 @@ async def generate_sentences_async(
       making it versatile for different types of text processing applications.
     """
 
+     # Initialize the tokenizer based on the specified tokenizer and language
     global current_tokenizer
     current_tokenizer = tokenizer
     init_tokenizer(current_tokenizer, language)
@@ -282,8 +287,9 @@ async def generate_sentences_async(
     buffer = ""
     is_first_sentence = True
     word_count = 0  # Initialize word count
-    last_delimiter_position = -1
+    last_delimiter_position = -1  # Position of last full sentence delimiter
 
+    # Adjust quick yield flags based on settings
     if quick_yield_every_fragment:
         quick_yield_for_all_sentences = True
 
@@ -296,10 +302,14 @@ async def generate_sentences_async(
             buffer += char
             buffer = buffer.lstrip()
 
-            # Update word count
+            # Update word count on encountering space or sentence fragment delimiter
             if char.isspace() or char in sentence_fragment_delimiters:
                 word_count += 1
 
+            if debug_mode:
+                print("\033[36mDebug: Added char, buffer size: \"{}\"\033[0m".format(len(buffer)))
+
+            # Check conditions to yield first sentence fragment quickly
             if (
                 is_first_sentence
                 and len(buffer) > minimum_first_fragment_length
@@ -312,23 +322,30 @@ async def generate_sentences_async(
                 ):
 
                     yield_text = _clean_text(
-                        buffer, cleanup_text_links, cleanup_text_emojis
-                    )
+                        buffer,
+                        cleanup_text_links,
+                        cleanup_text_emojis)
+                    if debug_mode:
+                        print("\033[36mDebug: Yielding first sentence fragment: \"{}\"\033[0m".format(yield_text))                    
+
                     yield yield_text
+
                     buffer = ""
                     if not quick_yield_every_fragment:
                         is_first_sentence = False
+
                     continue
 
-            # Check if minimum length reached
+             # Continue accumulating characters if buffer is under minimum sentence length
             if len(buffer) <= minimum_sentence_length + context_size:
+
                 continue
 
             # Update last delimiter position if a new delimiter is found
             if char in full_sentence_delimiters:
                 last_delimiter_position = len(buffer) - 1
 
-            # Check for potential sentence boundaries
+            # Define context window for checking potential sentence boundaries
             context_window_end_pos = len(buffer) - context_size - 1
             context_window_start_pos = (
                 context_window_end_pos - context_size_look_overhead
@@ -336,15 +353,24 @@ async def generate_sentences_async(
             if context_window_start_pos < 0:
                 context_window_start_pos = 0
 
+            # Tokenize sentences from buffer
             sentences = _tokenize_sentences(buffer, tokenize_sentences)
 
+            if debug_mode:
+                print("\033[36mbuffer: \"{}\"\033[0m".format(buffer))
+                print("\033[36mlast_delimiter_position: {}\033[0m".format(last_delimiter_position))
+                print("\033[36mlen(sentences) > 2: {}\033[0m".format(len(sentences) > 2))
+                print("\033[36mcontext_window_start_pos: {}\033[0m".format(context_window_start_pos))
+                print("\033[36mcontext_window_end_pos: {}\033[0m".format(context_window_end_pos))
+
+            # Process and yield sentences based on conditions
             if len(sentences) > 2 or (
                 last_delimiter_position >= 0
                 and context_window_start_pos
                 <= last_delimiter_position
                 <= context_window_end_pos
             ):
-
+                
                 if len(sentences) > 1:
                     total_length_except_last = sum(
                         len(sentence) for sentence in sentences[:-1]
@@ -352,15 +378,35 @@ async def generate_sentences_async(
                     if total_length_except_last >= minimum_sentence_length:
                         for sentence in sentences[:-1]:
                             yield_text = _clean_text(
-                                sentence, cleanup_text_links, cleanup_text_emojis
-                            )
+                                sentence,
+                                cleanup_text_links,
+                                cleanup_text_emojis)
+                            if debug_mode:
+                                print("\033[36mDebug: Yielding sentence: \"{}\"\033[0m".format(yield_text))
+
                             yield yield_text
+
                         if quick_yield_for_all_sentences:
                             is_first_sentence = True
-                        buffer = sentences[-1]
-                        last_delimiter_position = -1  # Reset after yielding
 
-    # Yield remaining buffer
+                        # we need to remember if the buffer ends with space
+                        # - sentences returned by the tokenizers are rtrimmed
+                        # - this takes any blank spaces away from the last unfinshed sentence
+                        # - we have to work around this by re-adding the blank space in this case
+                        ends_with_space = buffer.endswith(" ")
+
+                        # set buffer to last unfinshed sentence returned by tokenizers
+                        buffer = sentences[-1]
+
+                        # reset the blank space if it was there:
+                        if ends_with_space:
+                            buffer += " "
+
+                        # reset the last delimiter position after yielding
+                        last_delimiter_position = -1 
+
+    
+    # Yield remaining buffer as final sentence(s)
     if buffer:
         sentences = _tokenize_sentences(buffer, tokenize_sentences)
         sentence_buffer = ""
@@ -369,18 +415,27 @@ async def generate_sentences_async(
             sentence_buffer += sentence
             if len(sentence_buffer) < minimum_sentence_length:
                 sentence_buffer += " "
+
                 continue
+
+            if debug_mode:
+                print("\033[36mDebug: Yielding final sentence(s): \"{}\"\033[0m".format(yield_text))
             yield_text = _clean_text(
                 sentence_buffer, cleanup_text_links, cleanup_text_emojis
             )
+
             yield yield_text
 
             sentence_buffer = ""
 
         if sentence_buffer:
             yield_text = _clean_text(
-                sentence_buffer, cleanup_text_links, cleanup_text_emojis
-            )
+                sentence_buffer,
+                cleanup_text_links,
+                cleanup_text_emojis)
+            if debug_mode:
+                print("\033[36mDebug: Yielding remaining text: \"{}\"\033[0m".format(yield_text))
+
             yield yield_text
 
 
