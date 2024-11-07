@@ -33,7 +33,7 @@ def initialize_nltk():
     nltk_initialized = True
 
 
-def initialize_stanza(language: str = "en"):
+def initialize_stanza(language: str = "en", offline=False):
     """
     Initializes Stanza by downloading required data for sentence tokenization.
     """
@@ -44,8 +44,9 @@ def initialize_stanza(language: str = "en"):
     logging.info("Initializing Stanza")
 
     import stanza
-    stanza.download(language)
-    nlp = stanza.Pipeline(language)
+    if not offline:
+        stanza.download(language)
+    nlp = stanza.Pipeline(language, download_method=None)
     stanza_initialized = True
 
 
@@ -161,14 +162,14 @@ def _tokenize_sentences(text: str, tokenize_sentences=None) -> Iterator[str]:
     return sentences
 
 
-def init_tokenizer(tokenizer: str, language: str = "en"):
+def init_tokenizer(tokenizer: str, language: str = "en", offline=False):
     """
     Initializes the sentence tokenizer.
     """
     if tokenizer == "nltk":
         initialize_nltk()
     elif tokenizer == "stanza":
-        initialize_stanza(language)
+        initialize_stanza(language,offline=offline)
     else:
         logging.warning(f"Unknown tokenizer: {tokenizer}")
 
