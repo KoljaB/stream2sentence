@@ -177,7 +177,7 @@ def generate_sentences(generator: Iterator[str],
                        context_size: int = 12,
                        context_size_look_overhead: int = 12,
                        minimum_sentence_length: int = 10,
-                       minimum_first_fragment_length=10,
+                       minimum_first_fragment_length: int = 10,
                        quick_yield_single_sentence_fragment: bool = False,
                        quick_yield_for_all_sentences: bool = False,
                        quick_yield_every_fragment : bool = False,
@@ -190,6 +190,7 @@ def generate_sentences(generator: Iterator[str],
                        sentence_fragment_delimiters: str = ".?!;:,\n…)]}。-",
                        full_sentence_delimiters: str = ".?!\n…。",                       
                        force_first_fragment_after_words=15,
+                       debug_mode=False
                        ) -> Iterator[str]:
     """
     Generates well-formed sentences from a stream of characters or text chunks
@@ -243,6 +244,7 @@ def generate_sentences(generator: Iterator[str],
         force_first_fragment_after_words (int): The number of words after
           which the first sentence fragment is forced to be yielded.
           Default is 15 words.
+        debug_mode (bool): If True, enables debug mode for logging.
 
     Yields:
         Iterator[str]: An iterator of complete sentences constructed from the
@@ -257,31 +259,38 @@ def generate_sentences(generator: Iterator[str],
       making it versatile for different types of text processing applications.
     """
 
+     # Initialize the tokenizer based on the specified tokenizer and language
     global current_tokenizer
     current_tokenizer = tokenizer
     init_tokenizer(current_tokenizer, language)
 
-    buffer = ''
-    is_first_sentence = True
+    buffer = ''  # Buffer to hold incoming text for processing
+    is_first_sentence = True   # Flag to identify the first sentence
     word_count = 0  # Initialize word count
-    last_delimiter_position = -1
+    last_delimiter_position = -1  # Position of last full sentence delimiter
 
+    # Adjust quick yield flags based on settings
     if quick_yield_every_fragment:
         quick_yield_for_all_sentences = True
 
     if quick_yield_for_all_sentences:
         quick_yield_single_sentence_fragment = True
 
+     # Process each character from the generator
     for char in _generate_characters(generator, log_characters):
 
         if char:
             buffer += char
             buffer = buffer.lstrip()
 
-            # Update word count
+            # Update word count on encountering space or sentence fragment delimiter
             if char.isspace() or char in sentence_fragment_delimiters:
                 word_count += 1
 
+            if debug_mode:
+                print("\033[36mDebug: Added char, buffer size: \"{}\"\033[0m".format(len(buffer)))
+
+            # Check conditions to yield first sentence fragment quickly
             if (is_first_sentence
                     and len(buffer) > minimum_first_fragment_length
                     and quick_yield_single_sentence_fragment):
@@ -293,13 +302,15 @@ def generate_sentences(generator: Iterator[str],
                         buffer,
                         cleanup_text_links,
                         cleanup_text_emojis)
+                    if debug_mode:
+                        print("\033[36mDebug: Yielding first sentence fragment: \"{}\"\033[0m".format(yield_text))                    
                     yield yield_text
                     buffer = ""
                     if not quick_yield_every_fragment:
                         is_first_sentence = False
                     continue
 
-            # Check if minimum length reached
+             # Continue accumulating characters if buffer is under minimum sentence length
             if len(buffer) <= minimum_sentence_length + context_size:
                 continue
 
@@ -307,14 +318,23 @@ def generate_sentences(generator: Iterator[str],
             if char in full_sentence_delimiters:
                 last_delimiter_position = len(buffer) - 1
 
-            # Check for potential sentence boundaries
+            # Define context window for checking potential sentence boundaries
             context_window_end_pos = len(buffer) - context_size - 1
             context_window_start_pos = context_window_end_pos - context_size_look_overhead
             if context_window_start_pos < 0:
                 context_window_start_pos = 0
 
+            # Tokenize sentences from buffer
             sentences = _tokenize_sentences(buffer, tokenize_sentences)
 
+            if debug_mode:
+                print("\033[36mbuffer: \"{}\"\033[0m".format(buffer))
+                print("\033[36mlast_delimiter_position: {}\033[0m".format(last_delimiter_position))
+                print("\033[36mlen(sentences) > 2: {}\033[0m".format(len(sentences) > 2))
+                print("\033[36mcontext_window_start_pos: {}\033[0m".format(context_window_start_pos))
+                print("\033[36mcontext_window_end_pos: {}\033[0m".format(context_window_end_pos))
+
+            # Process and yield sentences based on conditions
             if (len(sentences) > 2 or 
                 (last_delimiter_position >= 0 and 
                 context_window_start_pos <= last_delimiter_position <= context_window_end_pos)
@@ -328,13 +348,30 @@ def generate_sentences(generator: Iterator[str],
                                 sentence,
                                 cleanup_text_links,
                                 cleanup_text_emojis)
+                            if debug_mode:
+                                print("\033[36mDebug: Yielding sentence: \"{}\"\033[0m".format(yield_text))
                             yield yield_text
                         if quick_yield_for_all_sentences:
                             is_first_sentence = True
-                        buffer = sentences[-1]
-                        last_delimiter_position = -1  # Reset after yielding                            
 
-    # Yield remaining buffer
+                        # we need to remember if the buffer ends with space
+                        # - sentences returned by the tokenizers are rtrimmed
+                        # - this takes any blank spaces away from the last unfinshed sentence
+                        # - we have to work around this by re-adding the blank space in this case
+                        ends_with_space = buffer.endswith(" ")
+
+                        # set buffer to last unfinshed sentence returned by tokenizers
+                        buffer = sentences[-1]
+
+                        # reset the blank space if it was there:
+                        if ends_with_space:
+                            buffer += " "
+
+                        # reset the last delimiter position after yielding
+                        last_delimiter_position = -1 
+
+    
+    # Yield remaining buffer as final sentence(s)
     if buffer:
         sentences = _tokenize_sentences(buffer, tokenize_sentences)
         sentence_buffer = ""
@@ -344,6 +381,8 @@ def generate_sentences(generator: Iterator[str],
             if len(sentence_buffer) < minimum_sentence_length:
                 sentence_buffer += " "
                 continue
+            if debug_mode:
+                print("\033[36mDebug: Yielding final sentence(s): \"{}\"\033[0m".format(yield_text))
             yield_text = _clean_text(
                 sentence_buffer,
                 cleanup_text_links,
@@ -357,4 +396,6 @@ def generate_sentences(generator: Iterator[str],
                 sentence_buffer,
                 cleanup_text_links,
                 cleanup_text_emojis)
+            if debug_mode:
+                print("\033[36mDebug: Yielding remaining text: \"{}\"\033[0m".format(yield_text))
             yield yield_text
