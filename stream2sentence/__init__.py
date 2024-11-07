@@ -1,1 +1,5 @@
-from .stream2sentence import generate_sentences, init_tokenizer
+from .stream2sentence import (
+    generate_sentences,
+    generate_sentences_async,
+    init_tokenizer,
+)

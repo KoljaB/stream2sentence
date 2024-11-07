@@ -3,11 +3,22 @@ Real-time processing and delivery of sentences
 from a continuous stream of characters or text chunks
 """
 
-from typing import Iterator
+import functools
 import logging
-import emoji
-import time
 import re
+import time
+from typing import (
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Concatenate,
+    Iterable,
+    Iterator,
+    ParamSpec,
+)
+
+import emoji
 
 current_tokenizer = "nltk"
 stanza_initialized = False
@@ -26,10 +37,11 @@ def initialize_nltk():
     logging.info("Initializing NLTK")
 
     import nltk
+
     try:
-        _ = nltk.data.find('tokenizers/punkt')
+        _ = nltk.data.find("tokenizers/punkt")
     except LookupError:
-        nltk.download('punkt')
+        nltk.download("punkt")
     nltk_initialized = True
 
 
@@ -44,8 +56,10 @@ def initialize_stanza(language: str = "en", offline=False):
     logging.info("Initializing Stanza")
 
     import stanza
+
     if not offline:
         stanza.download(language)
+
     nlp = stanza.Pipeline(language, download_method=None)
     stanza_initialized = True
 
@@ -61,11 +75,11 @@ def _remove_links(text: str) -> str:
         str: Text with links removed
     """
     pattern = (
-        r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|'
-        r'[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+        r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|"
+        r"[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
     )
 
-    return re.sub(pattern, '', text)
+    return re.sub(pattern, "", text)
 
 
 def _remove_emojis(text: str) -> str:
@@ -78,11 +92,12 @@ def _remove_emojis(text: str) -> str:
     Returns:
         str: Text with emojis removed
     """
-    return emoji.replace_emoji(text, u'')
+    return emoji.replace_emoji(text, "")
 
 
-def _generate_characters(generator: Iterator[str],
-                         log_characters: bool = False) -> Iterator[str]:
+async def _generate_characters(
+    generator: AsyncIterable[str], log_characters: bool = False
+) -> AsyncIterator[str]:
     """
     Generates individual characters from a text generator.
 
@@ -95,7 +110,7 @@ def _generate_characters(generator: Iterator[str],
     """
     if log_characters:
         print("Stream: ", end="", flush=True)
-    for chunk in generator:
+    async for chunk in generator:
         for char in chunk:
             if log_characters:
                 print(char, end="", flush=True)
@@ -104,10 +119,12 @@ def _generate_characters(generator: Iterator[str],
         print()
 
 
-def _clean_text(text: str,
-                cleanup_text_links: bool = False,
-                cleanup_text_emojis: bool = False,
-                strip_text: bool = True) -> str:
+def _clean_text(
+    text: str,
+    cleanup_text_links: bool = False,
+    cleanup_text_emojis: bool = False,
+    strip_text: bool = True,
+) -> str:
     """
     Cleans the text by removing links and emojis.
 
@@ -130,7 +147,7 @@ def _clean_text(text: str,
     return text
 
 
-def _tokenize_sentences(text: str, tokenize_sentences=None) -> Iterator[str]:
+def _tokenize_sentences(text: str, tokenize_sentences=None) -> list[str]:
     """
     Tokenizes sentences from the input text.
 
@@ -148,17 +165,18 @@ def _tokenize_sentences(text: str, tokenize_sentences=None) -> Iterator[str]:
         nlp_start_time = time.time()
         if current_tokenizer == "nltk":
             import nltk
+
             sentences = nltk.tokenize.sent_tokenize(text)
         elif current_tokenizer == "stanza":
             import stanza
+
             global nlp
             doc = nlp(text)
             sentences = [sentence.text for sentence in doc.sentences]
         else:
             raise ValueError(f"Unknown tokenizer: {current_tokenizer}")
         nlp_end_time = time.time()
-        logging.info("Time to split sentences: "
-                     f"{nlp_end_time - nlp_start_time}")
+        logging.info("Time to split sentences: " f"{nlp_end_time - nlp_start_time}")
     return sentences
 
 
@@ -174,25 +192,26 @@ def init_tokenizer(tokenizer: str, language: str = "en", offline=False):
         logging.warning(f"Unknown tokenizer: {tokenizer}")
 
 
-def generate_sentences(generator: Iterator[str],
-                       context_size: int = 12,
-                       context_size_look_overhead: int = 12,
-                       minimum_sentence_length: int = 10,
-                       minimum_first_fragment_length: int = 10,
-                       quick_yield_single_sentence_fragment: bool = False,
-                       quick_yield_for_all_sentences: bool = False,
-                       quick_yield_every_fragment : bool = False,
-                       cleanup_text_links: bool = False,
-                       cleanup_text_emojis: bool = False,
-                       tokenize_sentences=None,
-                       tokenizer: str = "nltk",
-                       language: str = "en",
-                       log_characters: bool = False,
-                       sentence_fragment_delimiters: str = ".?!;:,\n…)]}。-",
-                       full_sentence_delimiters: str = ".?!\n…。",                       
-                       force_first_fragment_after_words=15,
-                       debug_mode=False
-                       ) -> Iterator[str]:
+async def generate_sentences_async(
+    generator: AsyncIterable[str],
+    context_size: int = 12,
+    context_size_look_overhead: int = 12,
+    minimum_sentence_length: int = 10,
+    minimum_first_fragment_length=10,
+    quick_yield_single_sentence_fragment: bool = False,
+    quick_yield_for_all_sentences: bool = False,
+    quick_yield_every_fragment: bool = False,
+    cleanup_text_links: bool = False,
+    cleanup_text_emojis: bool = False,
+    tokenize_sentences=None,
+    tokenizer: str = "nltk",
+    language: str = "en",
+    log_characters: bool = False,
+    sentence_fragment_delimiters: str = ".?!;:,\n…)]}。-",
+    full_sentence_delimiters: str = ".?!\n…。",
+    force_first_fragment_after_words=15,
+    debug_mode=False,
+) -> AsyncIterator[str]:
     """
     Generates well-formed sentences from a stream of characters or text chunks
       provided by an input generator.
@@ -265,8 +284,8 @@ def generate_sentences(generator: Iterator[str],
     current_tokenizer = tokenizer
     init_tokenizer(current_tokenizer, language)
 
-    buffer = ''  # Buffer to hold incoming text for processing
-    is_first_sentence = True   # Flag to identify the first sentence
+    buffer = ""
+    is_first_sentence = True
     word_count = 0  # Initialize word count
     last_delimiter_position = -1  # Position of last full sentence delimiter
 
@@ -277,8 +296,7 @@ def generate_sentences(generator: Iterator[str],
     if quick_yield_for_all_sentences:
         quick_yield_single_sentence_fragment = True
 
-     # Process each character from the generator
-    for char in _generate_characters(generator, log_characters):
+    async for char in _generate_characters(generator, log_characters):
 
         if char:
             buffer += char
@@ -292,12 +310,16 @@ def generate_sentences(generator: Iterator[str],
                 print("\033[36mDebug: Added char, buffer size: \"{}\"\033[0m".format(len(buffer)))
 
             # Check conditions to yield first sentence fragment quickly
-            if (is_first_sentence
-                    and len(buffer) > minimum_first_fragment_length
-                    and quick_yield_single_sentence_fragment):
+            if (
+                is_first_sentence
+                and len(buffer) > minimum_first_fragment_length
+                and quick_yield_single_sentence_fragment
+            ):
 
-                if (buffer[-1] in sentence_fragment_delimiters
-                        or word_count >= force_first_fragment_after_words):
+                if (
+                    buffer[-1] in sentence_fragment_delimiters
+                    or word_count >= force_first_fragment_after_words
+                ):
 
                     yield_text = _clean_text(
                         buffer,
@@ -305,14 +327,18 @@ def generate_sentences(generator: Iterator[str],
                         cleanup_text_emojis)
                     if debug_mode:
                         print("\033[36mDebug: Yielding first sentence fragment: \"{}\"\033[0m".format(yield_text))                    
+
                     yield yield_text
+
                     buffer = ""
                     if not quick_yield_every_fragment:
                         is_first_sentence = False
+
                     continue
 
              # Continue accumulating characters if buffer is under minimum sentence length
             if len(buffer) <= minimum_sentence_length + context_size:
+
                 continue
 
             # Update last delimiter position if a new delimiter is found
@@ -321,7 +347,9 @@ def generate_sentences(generator: Iterator[str],
 
             # Define context window for checking potential sentence boundaries
             context_window_end_pos = len(buffer) - context_size - 1
-            context_window_start_pos = context_window_end_pos - context_size_look_overhead
+            context_window_start_pos = (
+                context_window_end_pos - context_size_look_overhead
+            )
             if context_window_start_pos < 0:
                 context_window_start_pos = 0
 
@@ -336,13 +364,17 @@ def generate_sentences(generator: Iterator[str],
                 print("\033[36mcontext_window_end_pos: {}\033[0m".format(context_window_end_pos))
 
             # Process and yield sentences based on conditions
-            if (len(sentences) > 2 or 
-                (last_delimiter_position >= 0 and 
-                context_window_start_pos <= last_delimiter_position <= context_window_end_pos)
-                ):
+            if len(sentences) > 2 or (
+                last_delimiter_position >= 0
+                and context_window_start_pos
+                <= last_delimiter_position
+                <= context_window_end_pos
+            ):
                 
                 if len(sentences) > 1:
-                    total_length_except_last = sum(len(sentence) for sentence in sentences[:-1])
+                    total_length_except_last = sum(
+                        len(sentence) for sentence in sentences[:-1]
+                    )
                     if total_length_except_last >= minimum_sentence_length:
                         for sentence in sentences[:-1]:
                             yield_text = _clean_text(
@@ -351,7 +383,9 @@ def generate_sentences(generator: Iterator[str],
                                 cleanup_text_emojis)
                             if debug_mode:
                                 print("\033[36mDebug: Yielding sentence: \"{}\"\033[0m".format(yield_text))
+
                             yield yield_text
+
                         if quick_yield_for_all_sentences:
                             is_first_sentence = True
 
@@ -381,13 +415,15 @@ def generate_sentences(generator: Iterator[str],
             sentence_buffer += sentence
             if len(sentence_buffer) < minimum_sentence_length:
                 sentence_buffer += " "
+
                 continue
+
             if debug_mode:
                 print("\033[36mDebug: Yielding final sentence(s): \"{}\"\033[0m".format(yield_text))
             yield_text = _clean_text(
-                sentence_buffer,
-                cleanup_text_links,
-                cleanup_text_emojis)
+                sentence_buffer, cleanup_text_links, cleanup_text_emojis
+            )
+
             yield yield_text
 
             sentence_buffer = ""
@@ -399,4 +435,44 @@ def generate_sentences(generator: Iterator[str],
                 cleanup_text_emojis)
             if debug_mode:
                 print("\033[36mDebug: Yielding remaining text: \"{}\"\033[0m".format(yield_text))
+
             yield yield_text
+
+
+def _await_sync(f: Awaitable[str]) -> str:
+    gen = f.__await__()
+    try:
+        next(gen)
+        raise RuntimeError(f"{f} failed to be synchronous")
+    except StopIteration as e:
+        return e.value
+
+
+def _async_iter_to_sync(f: AsyncIterator[str]) -> Iterator[str]:
+    try:
+        while True:
+            yield _await_sync(f.__anext__())
+    except StopAsyncIteration:
+        return
+
+
+P = ParamSpec("P")
+
+
+def _dowrap(
+    f: Callable[Concatenate[AsyncIterable[str], P], AsyncIterator[str]]
+) -> Callable[Concatenate[Iterable[str], P], Iterator[str]]:
+    @functools.wraps(f)
+    def inner(generator: Iterable[str], *args: P.args, **kwargs: P.kwargs):
+        async def gen_wrap():
+            for x in generator:
+                yield x
+
+        return _async_iter_to_sync(f(gen_wrap(), *args, **kwargs))
+
+    return inner
+
+
+generate_sentences = _dowrap(generate_sentences_async)
+generate_sentences.__name__ = "generate_sentences"
+generate_sentences.__qualname__ = "generate_sentences"
