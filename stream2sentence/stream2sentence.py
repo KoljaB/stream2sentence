@@ -303,6 +303,10 @@ async def generate_sentences_async(
     async for char in _generate_characters(generator, log_characters):
 
         if char:
+            if len(buffer) == 0:
+                if not char.isalnum():
+                    continue
+
             buffer += char
             buffer = buffer.lstrip()
 
