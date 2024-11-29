@@ -213,7 +213,7 @@ async def generate_sentences_async(
     log_characters: bool = False,
     sentence_fragment_delimiters: str = ".?!;:,\n…)]}。-",
     full_sentence_delimiters: str = ".?!\n…。",
-    force_first_fragment_after_words=15,
+    force_first_fragment_after_words=30,
     debug=False,
 ) -> AsyncIterator[str]:
     """
@@ -267,7 +267,7 @@ async def generate_sentences_async(
           considered full sentence delimiters. Default is ".?!\n…。".
         force_first_fragment_after_words (int): The number of words after
           which the first sentence fragment is forced to be yielded.
-          Default is 15 words.
+          Default is 30 words.
         debug (bool): If True, enables debug mode for logging.
 
     Yields:
@@ -322,7 +322,7 @@ async def generate_sentences_async(
 
                 if (
                     buffer[-1] in sentence_fragment_delimiters
-                    or word_count >= force_first_fragment_after_words
+                    or char.isspace() and word_count >= force_first_fragment_after_words
                 ):
 
                     yield_text = _clean_text(
@@ -330,11 +330,15 @@ async def generate_sentences_async(
                         cleanup_text_links,
                         cleanup_text_emojis)
                     if debug:
-                        print("\033[36mDebug: Yielding first sentence fragment: \"{}\"\033[0m".format(yield_text))                    
+                        if buffer[-1] in sentence_fragment_delimiters:
+                            print("\033[36mDebug: Yielding first sentence fragment: \"{}\" because buffer[-1] {} is sentence frag \033[0m".format(yield_text, buffer[-1]))
+                        else:
+                            print("\033[36mDebug: Yielding first sentence fragment: \"{}\" because word_count {} is >= force_first_fragment_after_words \033[0m".format(yield_text, word_count))
 
                     yield yield_text
 
                     buffer = ""
+                    word_count = 0
                     if not quick_yield_every_fragment:
                         is_first_sentence = False
 
@@ -389,6 +393,7 @@ async def generate_sentences_async(
                                 print("\033[36mDebug: Yielding sentence: \"{}\"\033[0m".format(yield_text))
 
                             yield yield_text
+                            word_count = 0
 
                         if quick_yield_for_all_sentences:
                             is_first_sentence = True
