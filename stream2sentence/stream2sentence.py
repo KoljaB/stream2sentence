@@ -375,6 +375,28 @@ async def generate_sentences_async(
                 print("\033[36mcontext_window_start_pos: {}\033[0m".format(context_window_start_pos))
                 print("\033[36mcontext_window_end_pos: {}\033[0m".format(context_window_end_pos))
 
+            # Combine sentences below minimum_sentence_length with the next sentence(s)
+            combined_sentences = []
+            temp_sentence = ""
+
+            for sentence in sentences:
+                if len(sentence) < minimum_sentence_length:
+                    temp_sentence += sentence + " "
+                else:
+                    if temp_sentence:
+                        temp_sentence += sentence
+                        combined_sentences.append(temp_sentence.strip())
+                        temp_sentence = ""
+                    else:
+                        combined_sentences.append(sentence.strip())
+
+            # If there's a leftover temp_sentence that hasn't been appended
+            if temp_sentence:
+                combined_sentences.append(temp_sentence.strip())
+
+            # Replace the original sentences with the combined_sentences
+            sentences = combined_sentences
+
             # Process and yield sentences based on conditions
             if len(sentences) > 2 or (
                 last_delimiter_position >= 0
