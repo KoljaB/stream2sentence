@@ -153,6 +153,36 @@ These parameters control how quickly and frequently the generator yields sentenc
   - Ensures timely output even with long opening sentences.
   - Default: 15 words
 
+
+## Time based strategy
+Instead of a purely lexigraphical strategy, a time based strategy is available.
+A target tokens per second is input, and generate_sentences will yield the best
+available output (full sentence, or longest fragment) if it is approaching a "deadline"
+where what has been output would be slower than the input TTS target. If LLM is more than
+two full sentences ahead of the target it will output a sentence even if output is ahead
+of the "deadline"
+
+`from stream2sentence.stream2sentence_time_based import generate_sentences`
+
+### Parameters
+- `generator (Iterator[str])`
+  - A generator that yields chunks of text as a stream of characters.`
+
+- `lead_time: float = 1`
+  - amount of time in seconds to wait for the buffer to build for before returning values.
+
+- `target_tps: float = 4`
+  - the rate in tokens per second you want to use to calculate deadlines for output.
+  - Default is 4. (approximately the speed of human speech)
+
+- `min_output_length: int = 4`
+  - if available output has fewer words than this then wait, even if deadline has been reached
+
+
+
+
+
+
 ## Contributing
 
 Any Contributions you make are welcome and **greatly appreciated**.
