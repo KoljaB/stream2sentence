@@ -4,6 +4,7 @@ import nltk
 import time
 from itertools import accumulate
 
+from stream2sentence.avoid_pause_words import AVOID_PAUSE_WORDS
 
 nltk_initialized = False
 
@@ -29,15 +30,15 @@ def initialize_nltk(debug=False):
 
 initialize_nltk()
 
-PREFERRED_SENTENCE_FRAGMENT_DELIMITERS = ['.', '?', '!', '\n']
-SENTENCE_FRAGMENT_DELIMITERS = [';', ':', ',', '*']
 WORDS_PER_TOKEN = 0.75
+preferred_sentence_fragment_delimiters_global = []
+sentence_fragment_delimiters_global = []
 
 def find_last_preferred_fragment_delimiter(s):
-    return max(s.rfind(c) for c in PREFERRED_SENTENCE_FRAGMENT_DELIMITERS)
+    return max(s.rfind(c) for c in preferred_sentence_fragment_delimiters_global)
 
 def find_last_fragment_delimiter(s):
-    return max(s.rfind(c) for c in SENTENCE_FRAGMENT_DELIMITERS)
+    return max(s.rfind(c) for c in sentence_fragment_delimiters_global)
 
 def get_num_words(s):
     return len(s.split())
@@ -75,11 +76,18 @@ def get_partial_output(llm_buffer, sentences_on_buffer, min_output_length):
         return llm_buffer[:delimiter_index + 1]
     return ""
 
+
 def generate_sentences(
     generator, 
     lead_time = 1,
+    max_wait_for_fragments = [3, 2],
     target_tps = 4,
-    min_output_length = 4,
+    min_output_lengths = [2, 3, 3, 4],
+    preferred_sentence_fragment_delimiters = ['. ', '? ', '! ', '\n'],
+    sentence_fragment_delimiters = ['; ', ': ', ', ', '* '],
+    wait_for_if_non_fragment = AVOID_PAUSE_WORDS,
+    #continue words - if there is no fragment by a deadline but the last word is one of these
+    #it will continue. Used with words that are generally awkward to pause at such as "and" and "this"
 ):
     """
     Uses a time based strategy to determine whether to yield. A target tps is provided,
@@ -87,38 +95,66 @@ def generate_sentences(
     the target then yield best available option.
 
     Args:
-        generator (Iterator[str]): A generator that yields chunks of text as a
-            stream of characters.
-        lead_time (float): amount of time in seconds to wait for the buffer 
-            to build for before returning values.
+        generator (Iterator[str]): A generator that yields chunks of text as a stream of characters.
+        lead_time (float): amount of time in seconds to wait for the buffer to build for before returning values.
             Default is 1.
-        target_tps (float): the rate in tokens per second you want to use 
-            to calculate deadlines for output.
+        max_wait_for_fragments (float): Max amount of time in seconds that the Nth sentence will wait beyond the 
+            "deadline" for a "fragment" (text preceeding a fragment delimiter), which is preferred over a piece of buffer.
+            The last value in the array is used for all subsequent checks.
+            Default is [3, 2].
+        target_tps (float): the rate in tokens per second you want to use to calculate output deadlines.
             Default is 4. (approximately the speed of human speech)
-        min_output_length (int): if available output has fewer words than this then wait, even if deadline has been reached
-            Default is 4.
+        min_output_lengths (int[]]): An array that corresponds to the minimum output size in words 
+            for the corresponding output sentence, the last value in the array is used for all remaining output. 
+            For example [4,5,6] would mean the first piece of output must have 4 words, the second 5 words, and all subsequent 6.
+            Default is [2, 3, 3, 4]
+        preferred_sentence_fragment_delimiters (str[]): Array of strings that deliniate a sentence fragment. "Preferred"
+            are checked first and always used if the fragment meets the length requirement over the other fragment delimiters.
+            Note the trailing spaces, added to differentiate between values like $3.5 and a proper sentence end
+            Default is ['. ', '? ', '! ', '\n']
+        sentence_fragment_delimiters (str[]): Array of strings that are checked after "preferred" delimiters
+            Default is ['; ', ': ', ', ', '* ']
+        wait_for_if_non_fragment (str[]): Array of strings that the algorithm will not use as the last value if the whole buffer
+            is being output. Avoids awkward pauses on common words that are unnatural to pause at. 
+            Default is a long list of common words documented in avoid_pause_words.py
 
     Yields:
         Iterator[str]: An iterator of complete sentences constructed from the
           input text stream.
 
     """
+    global preferred_sentence_fragment_delimiters_global, sentence_fragment_delimiters_global
+    preferred_sentence_fragment_delimiters_global = preferred_sentence_fragment_delimiters
+    sentence_fragment_delimiters_global = sentence_fragment_delimiters
 
     start_time = time.time()
+    last_sentence_time = time.time()
     estimated_time_between_words = 1 / (target_tps * WORDS_PER_TOKEN)
     output_sentences = []
     llm_buffer_full = ""
     has_output_started = False
+    num_sentences_output = 0
+
+    def get_min_output_length():
+        nonlocal min_output_lengths, num_sentences_output
+        return min_output_lengths[num_sentences_output] if num_sentences_output < len(min_output_lengths) else min_output_lengths[-1]
+    
+    def get_max_wait_for_fragment():
+        nonlocal max_wait_for_fragments, num_sentences_output
+        return max_wait_for_fragments[num_sentences_output] if num_sentences_output < len(max_wait_for_fragments) else max_wait_for_fragments[-1]
+
 
     def handle_output(output):
-        nonlocal has_output_started, llm_buffer_full, output_sentences, min_output_length, start_time, token
+        nonlocal has_output_started, llm_buffer_full, output_sentences, min_output_lengths, start_time, token, num_sentences_output, last_sentence_time
         if not has_output_started:
             #once output has started we go based on TTS start for deadline
             start_time = time.time()
             has_output_started = True
-            
+        
         llm_buffer_full = llm_buffer_full[len(output) + 1:]
         output_sentences.append(output)
+        num_sentences_output += 1
+        last_sentence_time = time.time()
         return output
 
     for token in generator:
@@ -131,17 +167,20 @@ def generate_sentences(
         sentences_on_buffer = nltk.tokenize.sent_tokenize(llm_buffer)
 
         if is_output_needed(has_output_started, start_time, lead_time, output_sentences, estimated_time_between_words):
-            output = get_partial_output(llm_buffer, sentences_on_buffer, min_output_length)
+            output = get_partial_output(llm_buffer, sentences_on_buffer, get_min_output_length())
             if output == "":
                 output = llm_buffer
-                if get_num_words(output) < min_output_length:
+                is_not_min_length = get_num_words(output) < get_min_output_length()
+                waiting_for_fragment = (time.time() - last_sentence_time < get_max_wait_for_fragment())
+                last_word_avoid_pause = output.split()[-1] in wait_for_if_non_fragment
+                if is_not_min_length or waiting_for_fragment or last_word_avoid_pause:
                     continue
             
             yield handle_output(output)
         else:
             word_lengths_of_sentences = list(map(get_num_words, sentences_on_buffer))
             sums_of_word_lens = list(accumulate(word_lengths_of_sentences))
-            sentences_needed_for_min_len = find_first_greater(sums_of_word_lens, min_output_length) + 1
+            sentences_needed_for_min_len = find_first_greater(sums_of_word_lens, get_min_output_length()) + 1
             if sentences_needed_for_min_len == 0 or sentences_needed_for_min_len + 2 > len(sentences_on_buffer):
                 #two sentences ahead is ideal
                 continue
