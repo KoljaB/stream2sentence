@@ -156,9 +156,9 @@ These parameters control how quickly and frequently the generator yields sentenc
 
 ## Time based strategy
 Instead of a purely lexigraphical strategy, a time based strategy is available.
-A target tokens per second is input, and generate_sentences will yield the best
-available output (full sentence, or longest fragment) if it is approaching a "deadline"
-where what has been output would be slower than the input TTS target. If LLM is more than
+A target tokens per second (tps) is input, and generate_sentences will yield the best
+available output (full sentence, longest fragment, or any available buffer, in that order) if it is approaching a "deadline"
+where what has been output would be slower than the input tps target. If LLM is more than
 two full sentences ahead of the target it will output a sentence even if output is ahead
 of the "deadline"
 
@@ -167,20 +167,27 @@ of the "deadline"
 ### Parameters
 - `generator (Iterator[str])`
   - A generator that yields chunks of text as a stream of characters.`
-
 - `lead_time: float = 1`
   - amount of time in seconds to wait for the buffer to build for before returning values.
-
+- `max_wait_for_fragments = [3, 2]`
+  - Max amount of time in seconds that the Nth sentence will wait beyond the "deadline" for a "fragment" (text preceeding a fragment delimiter), which is preferred over a piece of buffer.
+  - The last value in the array is used for all subsequent checks.
 - `target_tps: float = 4`
   - the rate in tokens per second you want to use to calculate deadlines for output.
   - Default is 4. (approximately the speed of human speech)
-
-- `min_output_length: int = 4`
-  - if available output has fewer words than this then wait, even if deadline has been reached
-
-
-
-
+- `min_output_lengths: int = [2, 3, 3, 4]`
+  - An array that corresponds to the minimum output size in words for the corresponding output sentence, the last value in the array is used for all remaining output.
+  - For example [4,5,6] would mean the first piece of output must have 4 words, the second 5 words, and all subsequent 6.
+- `preferred_sentence_fragment_delimiters (str[]) = ['. ', '? ', '! ', '\n']`
+  - Array of strings that deliniate a sentence fragment. "Preferred" are checked first and always used if the fragment meets the length requirement over the other fragment delimiters.
+  - Note the trailing spaces, added to differentiate between values like $3.5 and a proper sentence end
+- `sentence_fragment_delimiters (str[]) = ['; ', ': ', ', ', '* ']`
+  - Array of strings that are checked after "preferred" delimiters
+- `wait_for_if_non_fragment`
+  - Array of strings that the algorithm will not use as the last value if the whole buffer is being output (not a fragment or sentence).
+  - Avoids awkward pauses on common words that are unnatural to pause at.
+  - Default is a long list of common words documented in avoid_pause_words.py
+            
 
 
 ## Contributing

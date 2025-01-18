@@ -124,8 +124,8 @@ def generate_sentences(
 
     """
     global preferred_sentence_fragment_delimiters_global, sentence_fragment_delimiters_global
-    preferred_sentence_fragment_delimiters_global = preferred_sentence_fragment_delimiters
-    sentence_fragment_delimiters_global = sentence_fragment_delimiters
+    preferred_sentence_fragment_delimiters_global = set(preferred_sentence_fragment_delimiters)
+    sentence_fragment_delimiters_global = set(sentence_fragment_delimiters)
 
     start_time = time.time()
     last_sentence_time = time.time()
@@ -163,7 +163,7 @@ def generate_sentences(
         if get_num_words(llm_buffer_full) < 2:
             #must have at least two words since last token may not be a full word
             continue
-        llm_buffer = ' '.join(llm_buffer_full.split()[:-1])
+        llm_buffer = ' '.join(llm_buffer_full.split()[:-1]) #remove last word
         sentences_on_buffer = nltk.tokenize.sent_tokenize(llm_buffer)
 
         if is_output_needed(has_output_started, start_time, lead_time, output_sentences, estimated_time_between_words):

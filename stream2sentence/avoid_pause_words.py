@@ -50,5 +50,16 @@ subordinating_conjunctions = [
     "though", "while", "until", "unless"
 ]
 
-AVOID_PAUSE_WORDS = conjunctions + prepositions + articles + possessives_and_demonstratives + auxiliary_verbs + pronouns + quantifiers + adverbs + interrogatives + subordinating_conjunctions
+AVOID_PAUSE_WORDS = set(
+  conjunctions + 
+  prepositions + 
+  articles + 
+  possessives_and_demonstratives + 
+  auxiliary_verbs + 
+  pronouns + 
+  quantifiers + 
+  adverbs + 
+  interrogatives + 
+  subordinating_conjunctions
+)
 
