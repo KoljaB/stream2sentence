@@ -4,12 +4,12 @@ import nltk
 import time
 from itertools import accumulate
 
-from stream2sentence import initialize_nltk
+from stream2sentence import init_tokenizer
 from stream2sentence.avoid_pause_words import AVOID_PAUSE_WORDS
 from stream2sentence.delimiter_ignore_prefixes import DELIMITER_IGNORE_PREFIXES
 
 
-initialize_nltk()
+init_tokenizer("nltk")
 
 WORDS_PER_TOKEN = 0.75
 preferred_sentence_fragment_delimiters_global = []
