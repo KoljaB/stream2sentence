@@ -4,28 +4,9 @@ import nltk
 import time
 from itertools import accumulate
 
+from stream2sentence import initialize_nltk
 from stream2sentence.avoid_pause_words import AVOID_PAUSE_WORDS
-
-nltk_initialized = False
-
-def initialize_nltk(debug=False):
-    """
-    Initializes NLTK by downloading required data for sentence tokenization.
-    """
-    global nltk_initialized
-    if nltk_initialized:
-        return
-
-    print("Initializing NLTK Tokenizer")
-
-    try:
-        import nltk
-
-        nltk.download("punkt_tab", quiet=not debug)
-        nltk_initialized = True
-    except Exception as e:
-        print(f"Error initializing nltk tokenizer: {e}")
-        nltk_initialized = False
+from stream2sentence.delimiter_ignore_prefixes import DELIMITER_IGNORE_PREFIXES
 
 
 initialize_nltk()
@@ -33,12 +14,28 @@ initialize_nltk()
 WORDS_PER_TOKEN = 0.75
 preferred_sentence_fragment_delimiters_global = []
 sentence_fragment_delimiters_global = []
+delimiter_ignore_prefixes_global = []
+
+
+def find_last_delimiter(s, delimiters):
+    valid_indices = []
+    for delimiter in delimiters:
+        index = s.rfind(delimiter)
+        if index != -1:
+            # Get the word preceding the delimiter
+            preceding_word_start = s.rfind(" ", 0, index) + 1
+            preceding_word = s[preceding_word_start:index].strip()
+            
+            if preceding_word not in delimiter_ignore_prefixes_global:
+                valid_indices.append(index)
+    
+    return max(valid_indices, default=-1)
 
 def find_last_preferred_fragment_delimiter(s):
-    return max(s.rfind(c) for c in preferred_sentence_fragment_delimiters_global)
+    return find_last_delimiter(s, preferred_sentence_fragment_delimiters_global)
 
 def find_last_fragment_delimiter(s):
-    return max(s.rfind(c) for c in sentence_fragment_delimiters_global)
+    return find_last_delimiter(s, sentence_fragment_delimiters_global)
 
 def get_num_words(s):
     return len(s.split())
@@ -50,13 +47,13 @@ def find_first_greater(nums, value):
     return -1
 
 
-def is_output_needed(has_output_started, start_time, lead_time, output_sentences, estimated_time_between_words):
+def is_output_needed(has_output_started, start_time, lead_time, output_sentences, estimated_time_between_words, deadline_offset):
     cur_time = time.time()
     if not has_output_started and cur_time - start_time < lead_time:
         return False
     
     num_words_output = get_num_words(" ".join(output_sentences))
-    output_deadline = (num_words_output - 1) * estimated_time_between_words
+    output_deadline = num_words_output * estimated_time_between_words - deadline_offset
     return cur_time - start_time > output_deadline
 
 def is_output_long_enough(output, min_output_length):
@@ -84,10 +81,10 @@ def generate_sentences(
     target_tps = 4,
     min_output_lengths = [2, 3, 3, 4],
     preferred_sentence_fragment_delimiters = ['. ', '? ', '! ', '\n'],
-    sentence_fragment_delimiters = ['; ', ': ', ', ', '* '],
+    sentence_fragment_delimiters = ['; ', ': ', ', ', '* ', '– '],
+    delimiter_ignore_prefixes = DELIMITER_IGNORE_PREFIXES,
     wait_for_if_non_fragment = AVOID_PAUSE_WORDS,
-    #continue words - if there is no fragment by a deadline but the last word is one of these
-    #it will continue. Used with words that are generally awkward to pause at such as "and" and "this"
+    deadline_offset = 1,
 ):
     """
     Uses a time based strategy to determine whether to yield. A target tps is provided,
@@ -114,18 +111,25 @@ def generate_sentences(
             Default is ['. ', '? ', '! ', '\n']
         sentence_fragment_delimiters (str[]): Array of strings that are checked after "preferred" delimiters
             Default is ['; ', ': ', ', ', '* ']
+        delimiter_ignore_prefixes (str[]): Array of strings that will not be considered "delimiters" if preceeded by a delimiter.
+            Used to ignore common abbreviations for things like Mr. Dr. and Mrs. where we don't want to split
+            Default is a long list documented in delimiter_ignore_prefixes
         wait_for_if_non_fragment (str[]): Array of strings that the algorithm will not use as the last value if the whole buffer
             is being output. Avoids awkward pauses on common words that are unnatural to pause at. 
             Default is a long list of common words documented in avoid_pause_words.py
+        deadline_offset float: Constant amount of time in seconds to subtract from the deadline, 
+            accounts for the time it may take a TTS engine to process what was output.
+            Default is 1.
 
     Yields:
         Iterator[str]: An iterator of complete sentences constructed from the
           input text stream.
 
     """
-    global preferred_sentence_fragment_delimiters_global, sentence_fragment_delimiters_global
+    global preferred_sentence_fragment_delimiters_global, sentence_fragment_delimiters_global, delimiter_ignore_prefixes_global
     preferred_sentence_fragment_delimiters_global = set(preferred_sentence_fragment_delimiters)
     sentence_fragment_delimiters_global = set(sentence_fragment_delimiters)
+    delimiter_ignore_prefixes_global = set(delimiter_ignore_prefixes)
 
     start_time = time.time()
     last_sentence_time = time.time()
@@ -166,7 +170,7 @@ def generate_sentences(
         llm_buffer = ' '.join(llm_buffer_full.split()[:-1]) #remove last word
         sentences_on_buffer = nltk.tokenize.sent_tokenize(llm_buffer)
 
-        if is_output_needed(has_output_started, start_time, lead_time, output_sentences, estimated_time_between_words):
+        if is_output_needed(has_output_started, start_time, lead_time, output_sentences, estimated_time_between_words, deadline_offset):
             output = get_partial_output(llm_buffer, sentences_on_buffer, get_min_output_length())
             if output == "":
                 output = llm_buffer
