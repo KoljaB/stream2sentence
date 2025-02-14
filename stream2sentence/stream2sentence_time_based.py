@@ -1,6 +1,7 @@
 
-
 import nltk
+from nltk.tokenize import PunktSentenceTokenizer
+
 import time
 from itertools import accumulate
 
@@ -23,8 +24,8 @@ def find_last_delimiter(s, delimiters):
         index = s.rfind(delimiter)
         if index != -1:
             # Get the word preceding the delimiter
-            preceding_word_start = s.rfind(" ", 0, index) + 1
-            preceding_word = s[preceding_word_start:index].strip()
+            preceding_word_start = s.rfind(" ", 0, index)
+            preceding_word = s[preceding_word_start:index + 1].strip()
             
             if preceding_word not in delimiter_ignore_prefixes_global:
                 valid_indices.append(index)
@@ -60,10 +61,7 @@ def is_output_long_enough(output, min_output_length):
     num_words = get_num_words(output)
     return (num_words >= min_output_length)
 
-def get_partial_output(llm_buffer, sentences_on_buffer, min_output_length):
-    if len(sentences_on_buffer) > 1 and is_output_long_enough(sentences_on_buffer[0], min_output_length):
-        return sentences_on_buffer[0]
-    
+def get_fragment(llm_buffer, min_output_length):
     delimiter_index = find_last_preferred_fragment_delimiter(llm_buffer)
     if delimiter_index != -1 and is_output_long_enough(llm_buffer[:delimiter_index], min_output_length):
         return llm_buffer[:delimiter_index + 1]
@@ -81,10 +79,11 @@ def generate_sentences(
     target_tps = 4,
     min_output_lengths = [2, 3, 3, 4],
     preferred_sentence_fragment_delimiters = ['. ', '? ', '! ', '\n'],
-    sentence_fragment_delimiters = ['; ', ': ', ', ', '* ', '– '],
+    sentence_fragment_delimiters = ['; ', ': ', ', ', '* ', '**', '– '],
     delimiter_ignore_prefixes = DELIMITER_IGNORE_PREFIXES,
     wait_for_if_non_fragment = AVOID_PAUSE_WORDS,
-    deadline_offset = 1,
+    deadline_offset_static = 1,
+    deadline_offset_dynamic = 0,
 ):
     """
     Uses a time based strategy to determine whether to yield. A target tps is provided,
@@ -117,14 +116,15 @@ def generate_sentences(
         wait_for_if_non_fragment (str[]): Array of strings that the algorithm will not use as the last value if the whole buffer
             is being output. Avoids awkward pauses on common words that are unnatural to pause at. 
             Default is a long list of common words documented in avoid_pause_words.py
-        deadline_offset float: Constant amount of time in seconds to subtract from the deadline, 
-            accounts for the time it may take a TTS engine to process what was output.
+        deadline_offset_static float: Constant amount of time in seconds to subtract from the deadline.
             Default is 1.
-
+        deadline_offset_dynamic float: Added to account for the time it takes a TTS engine to generate output. 
+            For example, if it takes your TTS engine around 1 second to generate 10 words, you can use a value of 0.1
+            so that the TTS generation time is included in the deadline.
+            Default is 0.
     Yields:
         Iterator[str]: An iterator of complete sentences constructed from the
           input text stream.
-
     """
     global preferred_sentence_fragment_delimiters_global, sentence_fragment_delimiters_global, delimiter_ignore_prefixes_global
     preferred_sentence_fragment_delimiters_global = set(preferred_sentence_fragment_delimiters)
@@ -148,14 +148,17 @@ def generate_sentences(
         return max_wait_for_fragments[num_sentences_output] if num_sentences_output < len(max_wait_for_fragments) else max_wait_for_fragments[-1]
 
 
-    def handle_output(output):
+    def handle_output(output, sentence_boundary_index=None):
         nonlocal has_output_started, llm_buffer_full, output_sentences, min_output_lengths, start_time, token, num_sentences_output, last_sentence_time
         if not has_output_started:
             #once output has started we go based on TTS start for deadline
             start_time = time.time()
             has_output_started = True
         
-        llm_buffer_full = llm_buffer_full[len(output) + 1:]
+        end_index = len(output) + 1
+        if sentence_boundary_index != None:
+            end_index = sentence_boundary_index
+        llm_buffer_full = llm_buffer_full[end_index:]
         output_sentences.append(output)
         num_sentences_output += 1
         last_sentence_time = time.time()
@@ -163,15 +166,25 @@ def generate_sentences(
 
     for token in generator:
         llm_buffer_full += token
+        llm_buffer_full = llm_buffer_full.lstrip()
 
-        if get_num_words(llm_buffer_full) < 2:
+        split_buffer = llm_buffer_full.split()[:-1] #remove last word
+        words_on_buffer = len(split_buffer)
+        if words_on_buffer < 1:
             #must have at least two words since last token may not be a full word
             continue
-        llm_buffer = ' '.join(llm_buffer_full.split()[:-1]) #remove last word
+        llm_buffer = ' '.join(split_buffer)
         sentences_on_buffer = nltk.tokenize.sent_tokenize(llm_buffer)
+        sentence_boundaries = list(PunktSentenceTokenizer().span_tokenize(llm_buffer_full)) #handle white space descrepancies in full_buffer and buffer after split()
+
+        deadline_offset = (words_on_buffer * deadline_offset_dynamic) + deadline_offset_static
 
         if is_output_needed(has_output_started, start_time, lead_time, output_sentences, estimated_time_between_words, deadline_offset):
-            output = get_partial_output(llm_buffer, sentences_on_buffer, get_min_output_length())
+            if len(sentences_on_buffer) > 1 and is_output_long_enough(sentences_on_buffer[0], get_min_output_length()):
+                yield handle_output(sentences_on_buffer[0], sentence_boundaries[1][0])
+                continue
+
+            output = get_fragment(llm_buffer, get_min_output_length())
             if output == "":
                 output = llm_buffer
                 is_not_min_length = get_num_words(output) < get_min_output_length()
@@ -188,9 +201,9 @@ def generate_sentences(
             if sentences_needed_for_min_len == 0 or sentences_needed_for_min_len + 2 > len(sentences_on_buffer):
                 #two sentences ahead is ideal
                 continue
-
+            end_index = sentence_boundaries[sentences_needed_for_min_len][0]
             output = " ".join(sentences_on_buffer[:sentences_needed_for_min_len])
-            yield handle_output(output)
+            yield handle_output(output, end_index)
 
     #after all tokens are processed yield whatever is left
     for sentence in nltk.tokenize.sent_tokenize(llm_buffer_full):
