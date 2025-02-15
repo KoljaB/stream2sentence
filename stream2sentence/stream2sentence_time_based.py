@@ -138,6 +138,7 @@ def generate_sentences(
     preferred_sentence_fragment_delimiters_global = set(preferred_sentence_fragment_delimiters)
     sentence_fragment_delimiters_global = set(sentence_fragment_delimiters)
     delimiter_ignore_prefixes_global = set(delimiter_ignore_prefixes)
+    punkt_sentence_tokenizer = PunktSentenceTokenizer()
 
     start_time = time.time()
     last_sentence_time = time.time()
@@ -148,7 +149,7 @@ def generate_sentences(
 
 
     def handle_output(output, sentence_boundary_index=None):
-        nonlocal has_output_started, llm_buffer_full, output_sentences, min_output_lengths, start_time, token, last_sentence_time
+        nonlocal has_output_started, llm_buffer_full, output_sentences, min_output_lengths, start_time, last_sentence_time
         if not has_output_started:
             #once output has started we go based on TTS start for deadline
             start_time = time.time()
@@ -165,15 +166,14 @@ def generate_sentences(
     for token in generator:
         llm_buffer_full += token
         llm_buffer_full = llm_buffer_full.lstrip()
-
-        split_buffer = llm_buffer_full.split()[:-1] #remove last word
-        if len(split_buffer) == 0:
+        if len(llm_buffer_full.split(None, 2)) < 2:
             #must have at least two words since last token may not be a full word
             continue
-        llm_buffer = ' '.join(split_buffer)
+
+        llm_buffer = llm_buffer_full.rsplit(" ", 1)[0] #remove last word
         sentences_on_buffer = nltk.tokenize.sent_tokenize(llm_buffer)
-        sentence_boundaries = list(PunktSentenceTokenizer().span_tokenize(llm_buffer_full)) #handle white space descrepancies in full_buffer and buffer after split()
-        
+        sentence_boundaries = list(punkt_sentence_tokenizer.span_tokenize(llm_buffer_full)) #handle white space descrepancies in full_buffer and buffer after split()
+
         num_sentences_output = len(output_sentences)
         min_output_length = get_index_or_last(min_output_lengths, num_sentences_output)
         sentences_needed_for_min_len = get_sentences_needed_for_min_length(sentences_on_buffer, min_output_length)
@@ -203,7 +203,10 @@ def generate_sentences(
                 is_not_min_length = get_num_words(output) < min_output_length
                 max_wait_for_fragment = get_index_or_last(max_wait_for_fragments, num_sentences_output)
                 waiting_for_fragment = (time.time() - last_sentence_time < max_wait_for_fragment)
-                last_word_avoid_pause = output.split()[-1] in wait_for_if_non_fragment
+
+                _, last_word = output.rsplit(" ", 1)
+                last_word_avoid_pause = last_word in wait_for_if_non_fragment
+
                 if is_not_min_length or waiting_for_fragment or last_word_avoid_pause:
                     continue
             
