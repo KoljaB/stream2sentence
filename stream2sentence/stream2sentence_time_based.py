@@ -203,8 +203,10 @@ def generate_sentences(
                 is_not_min_length = get_num_words(output) < min_output_length
                 max_wait_for_fragment = get_index_or_last(max_wait_for_fragments, num_sentences_output)
                 waiting_for_fragment = (time.time() - last_sentence_time < max_wait_for_fragment)
-
-                _, last_word = output.rsplit(" ", 1)
+                if " " in output:
+                    _, last_word = output.rsplit(" ", 1)
+                else:
+                    last_word = output
                 last_word_avoid_pause = last_word in wait_for_if_non_fragment
 
                 if is_not_min_length or waiting_for_fragment or last_word_avoid_pause:

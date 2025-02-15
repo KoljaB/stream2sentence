@@ -1,7 +1,7 @@
 
 titles_and_abbreviations = [
     "Mr.", "Mrs.", "Ms.", "Dr.", "Prof.", "Rev.", "St.",
-    "Ph.D.", "M.D.", "B.A.", "M.A.", "D.D.S.", "J.D.",
+    "Ph.D.", "Phd.", "PhD.", "M.D.", "B.A.", "M.A.", "D.D.S.", "J.D.",
     "Inc.", "Ltd.", "Co.", "Corp.", "Ave.", "Blvd.", "Rd.", "Mt.",
     "a.m.", "p.m.", "Jr.", "Sr.",
     "Gov.", "Gen.", "Capt.", "Lt.", "Maj.", "Col.", "Adm.", "Cmdr.",
