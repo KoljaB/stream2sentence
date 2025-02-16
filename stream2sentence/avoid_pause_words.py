@@ -6,7 +6,7 @@ conjunctions = ["and", "or", "but", "so", "for", "nor", "yet"]
 # Prepositions
 prepositions = [
     "in", "on", "at", "by", "with", "about", "of", "to", "for", 
-    "from", "as", "over", "under", "through", "between", "during"
+    "from", "as", "over", "under", "through", "between", "during", "there"
 ]
 
 # Articles

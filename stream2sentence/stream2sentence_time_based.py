@@ -171,6 +171,8 @@ def generate_sentences(
             continue
 
         llm_buffer = llm_buffer_full.rsplit(" ", 1)[0] #remove last word
+
+        #TODO edge case with disagreement, how to identify and use len(output) as fallback?
         sentences_on_buffer = nltk.tokenize.sent_tokenize(llm_buffer)
         sentence_boundaries = list(punkt_sentence_tokenizer.span_tokenize(llm_buffer_full)) #handle white space descrepancies in full_buffer and buffer after split()
 
@@ -194,7 +196,7 @@ def generate_sentences(
 
         output_needed = is_output_needed(has_output_started, start_time, lead_time, output_sentences, estimated_time_between_words, deadline_offset)
         if output_needed and use_first_sentence:
-            end_index = sentence_boundaries[1][0]
+            end_index = len(sentences_on_buffer[0]) if len(sentence_boundaries) == 1 else sentence_boundaries[1][0] #edge case where sentence_boundaries disagrees with nltk.tokenize.sent_tokenize
             yield handle_output(sentences_on_buffer[0], end_index)
         elif output_needed:
             output = current_fragment
