@@ -155,7 +155,7 @@ def generate_sentences(
             start_time = time.time()
             has_output_started = True
         
-        end_index = len(output) + 1
+        end_index = len(output)
         if sentence_boundary_index != None:
             end_index = sentence_boundary_index
         llm_buffer_full = llm_buffer_full[end_index:]
