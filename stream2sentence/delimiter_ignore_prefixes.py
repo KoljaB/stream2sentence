@@ -2,7 +2,7 @@
 titles_and_abbreviations = [
     "Mr.", "Mrs.", "Ms.", "Dr.", "Prof.", "Rev.", "St.",
     "Ph.D.", "Phd.", "PhD.", "M.D.", "B.A.", "M.A.", "D.D.S.", "J.D.",
-    "Inc.", "Ltd.", "Co.", "Corp.", "Ave.", "Blvd.", "Rd.", "Mt.",
+    "Co.", "Corp.", "Ave.", "Blvd.", "Rd.", "Mt.",
     "a.m.", "p.m.", "Jr.", "Sr.",
     "Gov.", "Gen.", "Capt.", "Lt.", "Maj.", "Col.", "Adm.", "Cmdr.",
     "Sgt.", "Cpl.", "Pvt.", "U.S.", "U.K.", "vs.", "i.e.", "e.g.",
@@ -16,7 +16,6 @@ dates_and_times = [
 ]
 
 financial_abbreviations = [
-    # Financial Entities and Structures
     "Inc.", "Ltd.", "Corp.", "PLC.", "LLC.", "LLP.",
     "P/E.", "EPS.", "NAV.", "ROI.", "ROA.", "ROE.",
 ]
