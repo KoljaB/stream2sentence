@@ -181,7 +181,7 @@ def _tokenize_sentences(text: str, tokenize_sentences=None) -> list[str]:
         else:
             raise ValueError(f"Unknown tokenizer: {current_tokenizer}")
         nlp_end_time = time.time()
-        logging.info("Time to split sentences: " f"{nlp_end_time - nlp_start_time}")
+        logging.debug("Time to split sentences: " f"{nlp_end_time - nlp_start_time}")
     return sentences
 
 
@@ -214,6 +214,7 @@ async def generate_sentences_async(
     sentence_fragment_delimiters: str = ".?!;:,\n…)]}。-",
     full_sentence_delimiters: str = ".?!\n…。",
     force_first_fragment_after_words=30,
+    filter_first_non_alnum_characters: bool = False,
     debug=False,
 ) -> AsyncIterator[str]:
     """
@@ -268,6 +269,8 @@ async def generate_sentences_async(
         force_first_fragment_after_words (int): The number of words after
           which the first sentence fragment is forced to be yielded.
           Default is 30 words.
+        filter_first_non_alnum_characters (bool): If True, filters out the
+          first non-alphanumeric characters from the text stream.
         debug (bool): If True, enables debug mode for logging.
 
     Yields:
@@ -304,8 +307,9 @@ async def generate_sentences_async(
 
         if char:
             if len(buffer) == 0:
-                if not char.isalnum():
-                    continue
+                if filter_first_non_alnum_characters:
+                    if not char.isalnum():
+                        continue
 
             buffer += char
             buffer = buffer.lstrip()
@@ -453,11 +457,12 @@ async def generate_sentences_async(
 
                 continue
 
-            if debug:
-                print("\033[36mDebug: Yielding final sentence(s): \"{}\"\033[0m".format(yield_text))
             yield_text = _clean_text(
                 sentence_buffer, cleanup_text_links, cleanup_text_emojis
             )
+
+            if debug:
+                print("\033[36mDebug: Yielding final sentence(s): \"{}\"\033[0m".format(yield_text))
 
             yield yield_text
 

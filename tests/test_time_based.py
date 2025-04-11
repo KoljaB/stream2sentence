@@ -1,5 +1,5 @@
 
-from stream2sentence.stream2sentence_time_based import generate_sentences
+from stream2sentence.stream2sentence_time_based import generate_sentences_time_based as generate_sentences
 import time
 
 input_stewart_wiki = '''

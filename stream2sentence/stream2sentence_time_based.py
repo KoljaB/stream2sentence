@@ -79,7 +79,7 @@ def get_sentences_needed_for_min_length(sentences_on_buffer, min_output_length):
     return find_first_greater(sums_of_word_lens, min_output_length) + 1
 
 
-def generate_sentences(
+def generate_sentences_time_based(
     generator, 
     lead_time = 1,
     max_wait_for_fragments = [3, 2],
