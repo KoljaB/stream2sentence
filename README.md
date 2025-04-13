@@ -161,7 +161,7 @@ available output (full sentence, longest fragment, or any available buffer, in t
 where what has been output would be slower than the input tps target. If LLM is more than
 two full sentences ahead of the target it will output a sentence even if it's ahead of the "deadline"
 
-`from stream2sentence.stream2sentence_time_based import generate_sentences`
+`from stream2sentence.stream2sentence_time_based import generate_sentences_time_based`
 
 ### Parameters
 - `generator (Iterator[str])`
