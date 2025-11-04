@@ -91,6 +91,7 @@ def generate_sentences_time_based(
     wait_for_if_non_fragment = AVOID_PAUSE_WORDS,
     deadline_offsets_static = [1],
     deadline_offsets_dynamic = [0],
+    include_metadata = False,
 ):
     """
     Uses a time based strategy to determine whether to yield. A target tps is provided,
@@ -130,6 +131,9 @@ def generate_sentences_time_based(
             For example, if it takes your TTS engine around 1 second to generate 10 words, you can use a value of 0.1
             so that the TTS generation time is included in the deadline. Applied to first n sentences, last value applied to all subsequent
             Default is [0].
+        include_metadata bool: add metadata to the output returned as the second item in a tuple. 
+            Metadata includes "sentence_type": enum of ["buffer", "fragment", "sentence"]
+        
     Yields:
         Iterator[str]: An iterator of complete sentences constructed from the
           input text stream.
@@ -148,8 +152,8 @@ def generate_sentences_time_based(
     has_output_started = False
 
 
-    def handle_output(output, sentence_boundary_index=None):
-        nonlocal has_output_started, llm_buffer_full, output_sentences, min_output_lengths, start_time, last_sentence_time
+    def handle_output(output, sentence_boundary_index=None, metadata={}):
+        nonlocal has_output_started, llm_buffer_full, output_sentences, min_output_lengths, start_time, last_sentence_time, include_metadata
         if not has_output_started:
             #once output has started we go based on TTS start for deadline
             start_time = time.time()
@@ -161,6 +165,8 @@ def generate_sentences_time_based(
         llm_buffer_full = llm_buffer_full[end_index:]
         output_sentences.append(output)
         last_sentence_time = time.time()
+        if include_metadata:
+            return (output, metadata)
         return output
 
     for token in generator:
@@ -197,11 +203,13 @@ def generate_sentences_time_based(
         output_needed = is_output_needed(has_output_started, start_time, lead_time, output_sentences, estimated_time_between_words, deadline_offset)
         if output_needed and use_first_sentence:
             end_index = len(sentences_on_buffer[0]) if len(sentence_boundaries) == 1 else sentence_boundaries[1][0] #edge case where sentence_boundaries disagrees with nltk.tokenize.sent_tokenize
-            yield handle_output(sentences_on_buffer[0], end_index)
+            yield handle_output(sentences_on_buffer[0], sentence_boundary_index=end_index, metadata={"sentence_type": "sentence"})
         elif output_needed:
             output = current_fragment
+            sentence_type = "fragment"
             if output == "":
                 output = llm_buffer
+                sentence_type = "buffer"
                 is_not_min_length = get_num_words(output) < min_output_length
                 max_wait_for_fragment = get_index_or_last(max_wait_for_fragments, num_sentences_output)
                 waiting_for_fragment = (time.time() - last_sentence_time < max_wait_for_fragment)
@@ -214,18 +222,20 @@ def generate_sentences_time_based(
                 if is_not_min_length or waiting_for_fragment or last_word_avoid_pause:
                     continue
             
-            yield handle_output(output)
+            yield handle_output(output, metadata={"sentence_type": sentence_type})
         else:
             if sentences_needed_for_min_len == 0 or sentences_needed_for_min_len + 2 > len(sentences_on_buffer):
                 #two sentences ahead is ideal
                 continue
             end_index = sentence_boundaries[sentences_needed_for_min_len][0]
             output = " ".join(sentences_on_buffer[:sentences_needed_for_min_len])
-            yield handle_output(output, end_index)
+            yield handle_output(output, end_index, metadata={"sentence_type": "sentence"})
 
     #after all tokens are processed yield whatever is left
     for sentence in nltk.tokenize.sent_tokenize(llm_buffer_full):
-        yield sentence
-
+        if include_metadata:
+            yield (sentence, {"sentence_type": "sentence"})
+        else:
+            yield sentence
 
 
