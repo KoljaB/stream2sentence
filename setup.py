@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="stream2sentence", 
-    version="0.3.1",
+    version="0.3.2",
     author="Kolja Beigel",
     author_email="kolja.beigel@web.de",
     description="Real-time processing and delivery of sentences from a continuous stream of characters or text chunks.",
@@ -20,9 +20,9 @@ setuptools.setup(
     ],
     python_requires='>=3.6',
     install_requires=[
-        'nltk==3.9.1',
-        'emoji==2.14.1',
-        'stanza==1.10.1'
+        'nltk==3.9.4',
+        'emoji==2.15.0',
+        'stanza==1.11.1'
     ],
     keywords='realtime, text streaming, stream, sentence, sentence detection, sentence generation, tts, speech synthesis, nltk, text analysis, audio processing, boundary detection, sentence boundary detection'
 )
