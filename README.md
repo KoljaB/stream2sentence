@@ -123,12 +123,13 @@ These parameters control how quickly and frequently the generator yields sentenc
   - Default: None
 
 - `tokenizer: str = "nltk"`
-  - Specifies the tokenizer to use. Options: "nltk", "stanza", or "rule-based"
+  - Specifies the tokenizer to use. Options: "nltk", "stanza", "rule-based", or "nltk+rule-based"
+  - "nltk+rule-based" only splits where NLTK and the rule-based heuristic tokenizer agree on the sentence boundary.
   - Default: "nltk"
 
 - `language: str = "en"`
   - Language setting for the tokenizer.
-  - Use "en" for English or "multilingual" for Stanza tokenizer.
+  - Use "en" for English, "multilingual" for Stanza tokenizer, or a supported language code/name for rule-based heuristic data.
   - Default: "en"
 
 ### Debugging and Fine-tuning

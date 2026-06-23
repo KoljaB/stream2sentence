@@ -59,7 +59,7 @@ If the stream ends while a delimiter is pending, the normal flush path tokenizes
 
 ## Language Data
 
-Language-specific data was moved into `stream2sentence/data/language_contexts.json`.
+Language-specific heuristic data was moved into `stream2sentence/data/language_contexts.json`.
 
 The JSON currently stores:
 
@@ -67,7 +67,11 @@ The JSON currently stores:
 - language-specific abbreviations;
 - generic currency symbols used by token-continuation checks.
 
-The detector combines generic data with the configured language. This keeps the code small and makes future language-specific additions a data change rather than a code change.
+The detector combines generic data with the configured language. This file is a curated heuristic list, not authoritative language data; future additions should include regression tests that show the boundary behavior they protect.
+
+## Consensus Tokenizer
+
+`tokenizer="nltk+rule-based"` is available for stricter sentence splitting. It runs NLTK and the rule-based tokenizer, maps both outputs back to boundary offsets in the original text, and only splits at offsets both tokenizers selected.
 
 ## Cases Covered
 
@@ -84,7 +88,7 @@ The added tests cover cases where quick-yield should not split inside:
 - command-line flags and technical tokens;
 - local abbreviations;
 - metrics, percentages, and temperatures;
-- multilingual examples for Mandarin, Hindi, Spanish, French, Arabic, Portuguese, Russian, German, Japanese, and Turkish.
+- registered multilingual quick-yield examples for Mandarin, Hindi, Spanish, French, Arabic, Portuguese, Russian, German, Japanese, and Turkish.
 
 ## Verification
 
@@ -93,14 +97,16 @@ The following checks passed after the change:
 ```powershell
 .\.venv\Scripts\python.exe -m py_compile stream2sentence\quick_yield_boundary.py stream2sentence\stream2sentence.py tests\test_stream2sentence.py tests\test_stream_from_llm.py tests\test_stream_from_llm_old_api.py
 .\.venv\Scripts\python.exe -m unittest -k quick_yield tests.test_stream2sentence
+.\.venv\Scripts\python.exe -m unittest -k multilingual tests.test_stream2sentence
+.\.venv\Scripts\python.exe -m unittest -k tokenizer tests.test_stream2sentence
 .\.venv\Scripts\python.exe -m unittest discover -s tests
 ```
 
 Final full discovery result:
 
 ```text
-Ran 168 tests in 92.627s
-OK (skipped=2)
+Ran 180 tests in 0.480s
+OK (skipped=4)
 ```
 
-The two skipped tests are live OpenAI stream smoke scripts and are skipped when the optional `openai` package or `OPENAI_API_KEY` is unavailable.
+The skipped tests are the two live OpenAI stream smoke scripts and the two Stanza Chinese integration tests. Set `STREAM2SENTENCE_RUN_STANZA_TESTS=1` to include the slow Stanza integration checks.

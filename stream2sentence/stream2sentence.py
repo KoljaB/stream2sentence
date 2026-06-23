@@ -16,6 +16,7 @@ from typing import (
     Concatenate,
     Iterable,
     Iterator,
+    Optional,
     ParamSpec,
 )
 
@@ -29,11 +30,23 @@ stanza_initialized = False
 nltk_initialized = False
 nlp = None
 
+_QUICK_YIELD_TERMINATORS = ".?!。！？؟।"
+_QUICK_YIELD_CLOSING_MARKS = "\"')]}”’»›"
+_QUICK_YIELD_PRE_TERMINAL_CLOSING_MARKS = ")]}"
+
 
 def _normalize_tokenizer(tokenizer: str) -> str:
     tokenizer = (tokenizer or "nltk").lower().replace("_", "-")
     if tokenizer in {"rule-based", "rules"}:
         return "rule-based"
+    if tokenizer in {
+        "consensus",
+        "nltk+rule-based",
+        "nltk-rule-based",
+        "nltk+rules",
+        "nltk-rules",
+    }:
+        return "nltk+rule-based"
     return tokenizer
 
 
@@ -158,7 +171,12 @@ def _clean_text(
     return text
 
 
-def _tokenize_sentences(text: str, tokenize_sentences=None) -> list[str]:
+def _tokenize_sentences(
+    text: str,
+    tokenize_sentences=None,
+    tokenizer: Optional[str] = None,
+    language: Optional[str] = None,
+) -> list[str]:
     """
     Tokenizes sentences from the input text.
 
@@ -174,20 +192,25 @@ def _tokenize_sentences(text: str, tokenize_sentences=None) -> list[str]:
         sentences = tokenize_sentences(text)
     else:
         nlp_start_time = time.time()
-        if current_tokenizer == "nltk":
+        tokenizer = _normalize_tokenizer(tokenizer or current_tokenizer)
+        language = language or current_language
+
+        if tokenizer == "nltk":
             import nltk
 
             sentences = nltk.tokenize.sent_tokenize(text)
-        elif current_tokenizer == "rule-based":
-            sentences = _rule_based_tokenize_sentences(text, current_language)
-        elif current_tokenizer == "stanza":
+        elif tokenizer == "rule-based":
+            sentences = _rule_based_tokenize_sentences(text, language)
+        elif tokenizer == "nltk+rule-based":
+            sentences = _nltk_rule_based_tokenize_sentences(text, language)
+        elif tokenizer == "stanza":
             import stanza
 
             global nlp
             doc = nlp(text)
             sentences = [sentence.text for sentence in doc.sentences]
         else:
-            raise ValueError(f"Unknown tokenizer: {current_tokenizer}")
+            raise ValueError(f"Unknown tokenizer: {tokenizer}")
         nlp_end_time = time.time()
         logging.debug("Time to split sentences: " f"{nlp_end_time - nlp_start_time}")
     return sentences
@@ -237,6 +260,58 @@ def _rule_based_tokenize_sentences(text: str, language: str = "en") -> list[str]
     return sentences
 
 
+def _sentence_boundary_offsets(text: str, sentences: list[str]) -> list[int]:
+    offsets = []
+    search_start = 0
+
+    for sentence in sentences[:-1]:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+
+        while search_start < len(text) and text[search_start].isspace():
+            search_start += 1
+
+        match_start = text.find(sentence, search_start)
+        if match_start < 0:
+            return []
+
+        boundary = match_start + len(sentence)
+        offsets.append(boundary)
+        search_start = boundary
+
+    return offsets
+
+
+def _sentences_from_boundary_offsets(text: str, offsets: list[int]) -> list[str]:
+    sentences = []
+    start = 0
+
+    for offset in offsets:
+        sentence = text[start:offset].strip()
+        if sentence:
+            sentences.append(sentence)
+        start = offset
+
+    tail = text[start:].strip()
+    if tail:
+        sentences.append(tail)
+
+    return sentences
+
+
+def _nltk_rule_based_tokenize_sentences(text: str, language: str = "en") -> list[str]:
+    import nltk
+
+    nltk_sentences = nltk.tokenize.sent_tokenize(text)
+    rule_based_sentences = _rule_based_tokenize_sentences(text, language)
+    nltk_offsets = set(_sentence_boundary_offsets(text, nltk_sentences))
+    rule_based_offsets = set(_sentence_boundary_offsets(text, rule_based_sentences))
+    consensus_offsets = sorted(nltk_offsets & rule_based_offsets)
+
+    return _sentences_from_boundary_offsets(text, consensus_offsets)
+
+
 def init_tokenizer(tokenizer: str, language: str = "en", offline=False, debug=False):
     """
     Initializes the sentence tokenizer.
@@ -251,6 +326,9 @@ def init_tokenizer(tokenizer: str, language: str = "en", offline=False, debug=Fa
     elif tokenizer == "stanza":
         initialize_stanza(language, offline=offline)
     elif tokenizer == "rule-based":
+        return
+    elif tokenizer == "nltk+rule-based":
+        initialize_nltk(language, debug)
         return
     else:
         logging.warning(f"Unknown tokenizer: {tokenizer}")
@@ -317,7 +395,9 @@ async def generate_sentences_async(
         tokenize_sentences (Callable): A function that tokenizes sentences
           from the input text. Defaults to None.
         tokenizer (str): The tokenizer to use for sentence tokenization.
-          Default is "nltk". Can be "nltk", "stanza", or "rule-based".
+          Default is "nltk". Can be "nltk", "stanza", "rule-based", or
+          "nltk+rule-based". The "nltk+rule-based" tokenizer only splits at
+          sentence boundaries where NLTK and the rule-based tokenizer agree.
         language (str): The language to use for sentence tokenization.
           Default is "en". Can be "multilingual" for stanze tokenizer.
         log_characters (bool): If True, logs each character to the console as
@@ -480,7 +560,9 @@ class SentenceSplitter:
             tokenize_sentences (Callable): A function that tokenizes sentences
             from the input text. Defaults to None.
             tokenizer (str): The tokenizer to use for sentence tokenization.
-            Default is "nltk". Can be "nltk", "stanza", or "rule-based".
+            Default is "nltk". Can be "nltk", "stanza", "rule-based", or
+            "nltk+rule-based". The "nltk+rule-based" tokenizer only splits at
+            sentence boundaries where NLTK and the rule-based tokenizer agree.
             language (str): The language to use for sentence tokenization.
             Default is "en". Can be "multilingual" for stanze tokenizer.
             log_characters (bool): If True, logs each character to the console as
@@ -550,6 +632,24 @@ class SentenceSplitter:
     def add(self, chunk: str):
         self.input_buffer.append(chunk)
 
+    def _quick_yield_boundary_end(self, boundary_position):
+        boundary_end = boundary_position
+        while (
+            boundary_end + 1 < len(self.buffer)
+            and self.buffer[boundary_end + 1] in _QUICK_YIELD_CLOSING_MARKS
+        ):
+            boundary_end += 1
+        return boundary_end
+
+    def _has_quick_yield_lookahead(self, boundary_position):
+        return self._quick_yield_boundary_end(boundary_position) < len(self.buffer) - 1
+
+    def _is_quick_yield_terminal(self, boundary_position):
+        return self.buffer[boundary_position] in _QUICK_YIELD_TERMINATORS
+
+    def _is_quick_yield_pre_terminal_closing_mark(self, boundary_position):
+        return self.buffer[boundary_position] in _QUICK_YIELD_PRE_TERMINAL_CLOSING_MARKS
+
     def _consume_quick_yield_text(self, boundary_position=None):
         if boundary_position is None:
             text = self.buffer
@@ -579,16 +679,31 @@ class SentenceSplitter:
 
                     if self.pending_quick_yield_boundary is not None:
                         boundary_position = self.pending_quick_yield_boundary
-                        if boundary_position < len(self.buffer) - 1:
+                        boundary_end = self._quick_yield_boundary_end(boundary_position)
+                        if self._is_quick_yield_terminal(boundary_position):
+                            if not self._has_quick_yield_lookahead(boundary_position):
+                                continue
+                            next_char = self.buffer[boundary_end + 1]
+                        elif boundary_position < len(self.buffer) - 1:
+                            next_char = self.buffer[boundary_position + 1]
+                        else:
+                            continue
+
+                        if (
+                            self._is_quick_yield_pre_terminal_closing_mark(boundary_position)
+                            and next_char in _QUICK_YIELD_TERMINATORS
+                        ):
+                            self.pending_quick_yield_boundary = None
+                        elif boundary_position < len(self.buffer) - 1:
                             action = self.quick_yield_boundary_detector.classify(
                                 self.buffer,
                                 boundary_position,
-                                self.buffer[boundary_position + 1],
+                                next_char,
                             )
                             if action != HOLD:
                                 self.pending_quick_yield_boundary = None
                             if action == SPLIT:
-                                yield_text = self._consume_quick_yield_text(boundary_position)
+                                yield_text = self._consume_quick_yield_text(boundary_end)
                                 if self.debug:
                                     print("\033[36mDebug: Yielding first sentence fragment: \"{}\" after confirming pending delimiter\033[0m".format(yield_text))
                                 yield yield_text
@@ -618,6 +733,12 @@ class SentenceSplitter:
                                 self.pending_quick_yield_boundary = boundary_position
                                 continue
                             if action == REJECT:
+                                continue
+                            if self._is_quick_yield_terminal(boundary_position):
+                                self.pending_quick_yield_boundary = boundary_position
+                                continue
+                            if self._is_quick_yield_pre_terminal_closing_mark(boundary_position):
+                                self.pending_quick_yield_boundary = boundary_position
                                 continue
 
                             yield_text = self._consume_quick_yield_text()
@@ -656,7 +777,12 @@ class SentenceSplitter:
                         context_window_start_pos = 0
 
                     # Tokenize sentences from buffer
-                    sentences = _tokenize_sentences(self.buffer, self.tokenize_sentences)
+                    sentences = _tokenize_sentences(
+                        self.buffer,
+                        self.tokenize_sentences,
+                        self.tokenizer,
+                        self.language,
+                    )
 
                     if self.debug:
                         print("\033[36mbuffer: \"{}\"\033[0m".format(self.buffer))
@@ -733,7 +859,12 @@ class SentenceSplitter:
     def flush(self):
         # Yield remaining buffer as final sentence(s)
         if self.buffer:
-            sentences = _tokenize_sentences(self.buffer, self.tokenize_sentences)
+            sentences = _tokenize_sentences(
+                self.buffer,
+                self.tokenize_sentences,
+                self.tokenizer,
+                self.language,
+            )
             sentence_buffer = ""
 
             for sentence in sentences:

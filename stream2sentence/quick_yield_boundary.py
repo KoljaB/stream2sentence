@@ -148,10 +148,40 @@ _EN_SINGLE_TOKEN_ABBREVIATIONS = {
 }
 
 _EN_EXTRA_ABBREVIATIONS = {
+    "apt.",
     "apr.",
     "b.c.",
+    "ca.",
+    "et al.",
+    "cir.",
+    "ext.",
+    "fn.",
+    "loc.",
+    "loc. cit.",
+    "op.",
+    "op. cit.",
     "jul.",
     "oct.",
+}
+
+_EN_INITIALISM_CONTINUATION_WORDS = {
+    "air",
+    "army",
+    "congress",
+    "department",
+    "embassy",
+    "federal",
+    "forces",
+    "government",
+    "navy",
+    "senate",
+}
+
+# Exact fixed-title continuations only; "Who?" still splits unless followed by
+# "Weekly", and "Yahoo!" still splits unless followed by "Finance".
+_EN_PUNCTUATED_NAME_CONTINUATIONS = {
+    "who?": {"weekly"},
+    "yahoo!": {"finance"},
 }
 
 
@@ -187,6 +217,8 @@ def _keep_english_abbreviation(abbreviation):
     abbreviation = abbreviation.casefold()
     if abbreviation in {"ok.", "okay."}:
         return False
+    if abbreviation in _EN_EXTRA_ABBREVIATIONS:
+        return True
     if abbreviation.count(".") > 1:
         return True
     return abbreviation in _EN_SINGLE_TOKEN_ABBREVIATIONS
@@ -229,8 +261,11 @@ class QuickYieldBoundaryDetector:
     def classify(self, buffer, delimiter_index, next_char=None):
         delimiter = buffer[delimiter_index]
 
-        if delimiter in "\n!\u3002\uff01":
+        if delimiter in "\n\u3002\uff01":
             return SPLIT
+
+        if delimiter == "!":
+            return self._classify_punctuated_name(buffer, delimiter_index)
 
         if delimiter in "?\uff1f":
             return self._classify_question_mark(buffer, delimiter_index, next_char)
@@ -275,11 +310,34 @@ class QuickYieldBoundaryDetector:
 
     def _classify_question_mark(self, buffer, delimiter_index, next_char):
         if not self._inside_url_token(buffer, delimiter_index):
+            punctuated_name_action = self._classify_punctuated_name(buffer, delimiter_index)
+            if punctuated_name_action != SPLIT:
+                return punctuated_name_action
             return SPLIT
 
         if next_char is None:
             return HOLD
         return REJECT if self._continues_token(next_char) else SPLIT
+
+    def _classify_punctuated_name(self, buffer, delimiter_index):
+        if self.language != "en":
+            return SPLIT
+
+        key = self._current_token(buffer[:delimiter_index + 1]).strip(
+            _OPENING_MARKS + _CLOSING_MARKS + ".,;:"
+        ).casefold()
+        continuations = _EN_PUNCTUATED_NAME_CONTINUATIONS.get(key)
+        if not continuations:
+            return SPLIT
+
+        token, ended = self._next_token(buffer, delimiter_index)
+        if not token:
+            return HOLD
+
+        clean_token = token.strip(_OPENING_MARKS + _CLOSING_MARKS + ".,;:!?")
+        if not ended and clean_token.casefold() not in continuations:
+            return HOLD
+        return REJECT if clean_token.casefold() in continuations else SPLIT
 
     def _classify_comma(self, buffer, delimiter_index, next_char):
         previous = self._previous_char(buffer, delimiter_index)
@@ -344,6 +402,15 @@ class QuickYieldBoundaryDetector:
         folded = clean_token.casefold()
         if not ended and len(folded) < 3:
             return HOLD
+        if abbreviation.count(".") > 1 and not ended:
+            return HOLD
+        if (
+            abbreviation.count(".") > 1
+            and folded in _EN_INITIALISM_CONTINUATION_WORDS
+        ):
+            return REJECT
+        if abbreviation == "no." and len(clean_token) == 1 and clean_token.isupper():
+            return REJECT
         if clean_token[0].islower() or clean_token[0].isdigit():
             return REJECT
         return SPLIT
@@ -406,8 +473,6 @@ class QuickYieldBoundaryDetector:
         if len(before_current) < 2:
             return ""
         return before_current[0].rsplit(None, 1)[-1].strip(_OPENING_MARKS + _CLOSING_MARKS)
-
-        return False
 
     def _closes_bracketed_value(self, buffer, delimiter_index):
         delimiter = buffer[delimiter_index]

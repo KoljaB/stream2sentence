@@ -1,8 +1,9 @@
 import importlib
+import os
 import re
 import unittest
 from unittest import mock
-from stream2sentence import generate_sentences, generate_sentences_async
+from stream2sentence import SentenceSplitter, generate_sentences, generate_sentences_async
 
 
 def simple_sentence_tokenizer(text):
@@ -19,6 +20,7 @@ def single_sentence_tokenizer(text):
 
 
 TOKENIZERS_UNDER_TEST = ("nltk", "rule-based")
+RUN_STANZA_INTEGRATION = os.environ.get("STREAM2SENTENCE_RUN_STANZA_TESTS") == "1"
 
 
 MULTILINGUAL_DELIMITERS = ".?!;:,\n…)]}。！？؟।-"
@@ -27,6 +29,24 @@ MULTILINGUAL_FULL_DELIMITERS = ".?!\n…。！？؟।"
 
 def chunk_text(text, size):
     return [text[index:index + size] for index in range(0, len(text), size)]
+
+
+CONSENSUS_STRESS_INPUT = """Dr. A. J. Rivera met Mr. O'Neil at 8:05 a.m. in St. John's, N.L., to review sec. 3.2 of the U.S. export memo before breakfast. The memo said that Acme Widgets, Inc., not Acme Widgets Co. Ltd., shipped 1.5-mm parts from No. 4 Dock to Apt. 2B via FedEx, etc., and nobody was surprised. Prof. Nguyen wrote “see Fig. 2.1, Eq. (4.3), and fn. 7” in the margin, although the margin also had the file name draft.v0.9.final.pdf on it. Maya emailed qa.bot+alerts@example.co.uk about https://staging.example.com/v1.2/status?ok=false, but the error was just “timeout at 10.0.0.5:443,” not a crash. The changelog entry “v2.0.0-beta.3 fixes U.S.-only i18n bugs” looked final, yet Sam kept typing because “beta.3” was not a sentence by itself. In the transcript, the speaker says “I live on E. 5th St. near Washington, D.C.” while the sentence continues with a note about background noise. The invoice lists 12.50 EUR, 3.14159 kg, Item No. A.7, Ref. ID X.Y.Z., and the harmless label “End.” printed in the middle of the page. When the router logs “eth0: link down... retrying in 0.5 sec.” it is still part of the same report sentence, not the end of the user-facing sentence. The legal draft names Smith v. Jones, 123 F.3d 456, 458 n.2 (9th Cir. 1999), and then continues with “cf. Brown, supra,” without stopping. Our parser should keep reading after labels like a. setup, b. train, c. eval, because those list markers are not sentence endings in this context. Even punctuation-heavy brand names like Yahoo! Finance, Guess?, and Who? Weekly can sit inside a perfectly normal sentence without ending it. Finally, the note “call me at 555.0100 ext. 42 before 6 p.m., unless Jan. 3 is a holiday” contains four tempting dots before the real full stop."""
+
+CONSENSUS_STRESS_EXPECTED = [
+    "Dr. A. J. Rivera met Mr. O'Neil at 8:05 a.m. in St. John's, N.L., to review sec. 3.2 of the U.S. export memo before breakfast.",
+    "The memo said that Acme Widgets, Inc., not Acme Widgets Co. Ltd., shipped 1.5-mm parts from No. 4 Dock to Apt. 2B via FedEx, etc., and nobody was surprised.",
+    "Prof. Nguyen wrote “see Fig. 2.1, Eq. (4.3), and fn. 7” in the margin, although the margin also had the file name draft.v0.9.final.pdf on it.",
+    "Maya emailed qa.bot+alerts@example.co.uk about https://staging.example.com/v1.2/status?ok=false, but the error was just “timeout at 10.0.0.5:443,” not a crash.",
+    "The changelog entry “v2.0.0-beta.3 fixes U.S.-only i18n bugs” looked final, yet Sam kept typing because “beta.3” was not a sentence by itself.",
+    "In the transcript, the speaker says “I live on E. 5th St. near Washington, D.C.” while the sentence continues with a note about background noise.",
+    "The invoice lists 12.50 EUR, 3.14159 kg, Item No. A.7, Ref. ID X.Y.Z., and the harmless label “End.” printed in the middle of the page.",
+    "When the router logs “eth0: link down... retrying in 0.5 sec.” it is still part of the same report sentence, not the end of the user-facing sentence.",
+    "The legal draft names Smith v. Jones, 123 F.3d 456, 458 n.2 (9th Cir. 1999), and then continues with “cf. Brown, supra,” without stopping.",
+    "Our parser should keep reading after labels like a. setup, b. train, c. eval, because those list markers are not sentence endings in this context.",
+    "Even punctuation-heavy brand names like Yahoo! Finance, Guess?, and Who? Weekly can sit inside a perfectly normal sentence without ending it.",
+    "Finally, the note “call me at 555.0100 ext. 42 before 6 p.m., unless Jan. 3 is a holiday” contains four tempting dots before the real full stop.",
+]
 
 
 def quick_yield_sentences(
@@ -110,6 +130,10 @@ class TestSentenceGenerator(unittest.TestCase):
                 ))
                 self.assertEqual(sentences, expected)
 
+    @unittest.skipUnless(
+        RUN_STANZA_INTEGRATION,
+        "set STREAM2SENTENCE_RUN_STANZA_TESTS=1 to run slow Stanza integration tests",
+    )
     def test_chinese(self):
         text = "我喜欢读书。天气很好。我们去公园吧。今天是星期五。早上好。这是我的朋友。请帮我。吃饭了吗？我在学中文。晚安。"
         #expected = ["我喜欢读书。", "天气很好。", "我们去公园吧。", "今天是星期五。", "早上好。", "这是我的朋友。", "请帮我。吃饭了吗？", "我在学中文。", "晚安。"]
@@ -118,6 +142,10 @@ class TestSentenceGenerator(unittest.TestCase):
         sentences = list(generate_sentences(text, minimum_sentence_length=2, context_size=2, tokenizer="stanza", language="zh"))
         self.assertEqual(sentences, expected)    
 
+    @unittest.skipUnless(
+        RUN_STANZA_INTEGRATION,
+        "set STREAM2SENTENCE_RUN_STANZA_TESTS=1 to run slow Stanza integration tests",
+    )
     def test_chinese2(self):
         text = """
         胡/爷/爷，我/来/给/您/讲/一下/下/周/每/天/的/安/排。 
@@ -449,6 +477,9 @@ class TestSentenceGenerator(unittest.TestCase):
             "I called Dr. Smith today.",
             "The meeting is at 3 p.m. tomorrow.",
             "Use e.g. apples in the list.",
+            "Smith et al. reported the result.",
+            "See op. cit. for details.",
+            "The value is ca. 10 today.",
             "The match is Team A vs. Team B tonight.",
             "See Fig. 2 in the paper.",
             "The office is on St. Patrick Avenue today.",
@@ -457,6 +488,52 @@ class TestSentenceGenerator(unittest.TestCase):
         for text in cases:
             with self.subTest(text=text):
                 self.assertQuickYieldSingleSentence(text)
+
+    def test_quick_yield_preserves_closing_marks(self):
+        cases = [
+            ('"Hello." Next.', ['"Hello."', "Next."]),
+            ('"Hello!" Next.', ['"Hello!"', "Next."]),
+            ('"Hello?" Next.', ['"Hello?"', "Next."]),
+            ('"Really)." Next.', ['"Really)."', "Next."]),
+        ]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertQuickYieldSentences(text, expected)
+
+    def test_quick_yield_abbreviation_sentence_boundaries(self):
+        cases = [
+            (
+                "The U.S. Army arrived today. It stayed.",
+                ["The U.S. Army arrived today.", "It stayed."],
+            ),
+            (
+                "He lives in the U.S. It is large.",
+                ["He lives in the U.S.", "It is large."],
+            ),
+            (
+                "Smith et al. reported the result. It held.",
+                ["Smith et al. reported the result.", "It held."],
+            ),
+            (
+                "See op. cit. for details. Continue.",
+                ["See op. cit. for details.", "Continue."],
+            ),
+            (
+                "The value is ca. 10 today. Continue.",
+                ["The value is ca. 10 today.", "Continue."],
+            ),
+        ]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                sentences = list(generate_sentences(
+                    text,
+                    quick_yield_single_sentence_fragment=True,
+                    minimum_sentence_length=1,
+                    minimum_first_fragment_length=1,
+                    tokenizer="rule-based",
+                    language="en",
+                ))
+                self.assertEqual(sentences, expected)
 
     def test_nltk_tokenizer_uses_nltk_sent_tokenize(self):
         stream2sentence_module = importlib.import_module("stream2sentence.stream2sentence")
@@ -509,6 +586,141 @@ class TestSentenceGenerator(unittest.TestCase):
         finally:
             stream2sentence_module.current_tokenizer = old_tokenizer
             stream2sentence_module.current_language = old_language
+
+    def test_consensus_tokenizer_requires_nltk_and_rule_based_agreement(self):
+        stream2sentence_module = importlib.import_module("stream2sentence.stream2sentence")
+        text = "One. Two."
+
+        with mock.patch(
+            "nltk.tokenize.sent_tokenize",
+            return_value=["One. Two."],
+        ) as sent_tokenize:
+            with mock.patch.object(
+                stream2sentence_module,
+                "_rule_based_tokenize_sentences",
+                return_value=["One.", "Two."],
+            ) as rule_based_tokenize:
+                self.assertEqual(
+                    stream2sentence_module._tokenize_sentences(
+                        text,
+                        tokenizer="nltk+rule-based",
+                        language="en",
+                    ),
+                    ["One. Two."],
+                )
+                sent_tokenize.assert_called_once_with(text)
+                rule_based_tokenize.assert_called_once_with(text, "en")
+
+    def test_consensus_tokenizer_keeps_shared_boundaries(self):
+        stream2sentence_module = importlib.import_module("stream2sentence.stream2sentence")
+        text = "One. Two. Three."
+
+        with mock.patch(
+            "nltk.tokenize.sent_tokenize",
+            return_value=["One.", "Two. Three."],
+        ):
+            with mock.patch.object(
+                stream2sentence_module,
+                "_rule_based_tokenize_sentences",
+                return_value=["One.", "Two.", "Three."],
+            ):
+                self.assertEqual(
+                    stream2sentence_module._tokenize_sentences(
+                        text,
+                        tokenizer="consensus",
+                        language="en",
+                    ),
+                    ["One.", "Two. Three."],
+                )
+
+    def test_consensus_tokenizer_handles_punctuation_heavy_char_stream(self):
+        self.assertEqual(
+            list(generate_sentences(
+                list(CONSENSUS_STRESS_INPUT),
+                tokenizer="nltk+rule-based",
+                language="en",
+                minimum_sentence_length=1,
+                context_size=12,
+                context_size_look_overhead=64,
+            )),
+            CONSENSUS_STRESS_EXPECTED,
+        )
+
+    def test_punctuated_name_continuations_are_exact(self):
+        cases = [
+            (
+                "Who? Weekly covered the story. Readers noticed.",
+                ["Who? Weekly covered the story.", "Readers noticed."],
+            ),
+            (
+                "Who? It was Sam.",
+                ["Who?", "It was Sam."],
+            ),
+            (
+                "Yahoo! Finance posted the quote. Traders noticed.",
+                ["Yahoo! Finance posted the quote.", "Traders noticed."],
+            ),
+            (
+                "Yahoo! It posted a quote.",
+                ["Yahoo!", "It posted a quote."],
+            ),
+        ]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    list(generate_sentences(
+                        list(text),
+                        tokenizer="nltk+rule-based",
+                        language="en",
+                        minimum_sentence_length=1,
+                        context_size=12,
+                        context_size_look_overhead=64,
+                    )),
+                    expected,
+                )
+
+    def test_sentence_splitter_stream_uses_instance_tokenizer(self):
+        stream2sentence_module = importlib.import_module("stream2sentence.stream2sentence")
+        old_nltk_initialized = stream2sentence_module.nltk_initialized
+        stream2sentence_module.nltk_initialized = True
+        try:
+            splitter = SentenceSplitter(
+                tokenizer="rule-based",
+                language="en",
+                minimum_sentence_length=1,
+                context_size=1,
+                context_size_look_overhead=24,
+            )
+            SentenceSplitter(tokenizer="nltk", language="en")
+            splitter.add("One. Two. Three.")
+            with mock.patch(
+                "nltk.tokenize.sent_tokenize",
+                side_effect=AssertionError("stream must use the splitter tokenizer"),
+            ):
+                sentences = list(splitter.stream()) + list(splitter.flush())
+            self.assertEqual(sentences, ["One.", "Two.", "Three."])
+        finally:
+            stream2sentence_module.nltk_initialized = old_nltk_initialized
+
+    def test_sentence_splitter_flush_uses_instance_tokenizer(self):
+        stream2sentence_module = importlib.import_module("stream2sentence.stream2sentence")
+        old_nltk_initialized = stream2sentence_module.nltk_initialized
+        stream2sentence_module.nltk_initialized = True
+        try:
+            splitter = SentenceSplitter(
+                tokenizer="rule-based",
+                language="en",
+                minimum_sentence_length=1,
+            )
+            SentenceSplitter(tokenizer="nltk", language="en")
+            splitter.buffer = "One. Two."
+            with mock.patch(
+                "nltk.tokenize.sent_tokenize",
+                side_effect=AssertionError("flush must use the splitter tokenizer"),
+            ):
+                self.assertEqual(list(splitter.flush()), ["One.", "Two."])
+        finally:
+            stream2sentence_module.nltk_initialized = old_nltk_initialized
 
     def test_rule_based_tokenizer_uses_right_context(self):
         cases = [
@@ -930,9 +1142,7 @@ def _make_multilingual_quick_yield_test(text, language):
     return test
 
 
-# Keep the old single-sentence cases available as data, but do not register
-# them as sentence-boundary tests. The gold fixtures above own that coverage.
-for language, category, text in []:
+for language, category, text in MULTILINGUAL_QUICK_YIELD_CASES:
     test_name = f"test_quick_yield_multilingual_{language}_{category}"
     setattr(
         TestSentenceGenerator,
