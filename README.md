@@ -123,7 +123,7 @@ These parameters control how quickly and frequently the generator yields sentenc
   - Default: None
 
 - `tokenizer: str = "nltk"`
-  - Specifies the tokenizer to use. Options: "nltk" or "stanza"
+  - Specifies the tokenizer to use. Options: "nltk", "stanza", or "rule-based"
   - Default: "nltk"
 
 - `language: str = "en"`

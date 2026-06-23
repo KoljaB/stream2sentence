@@ -1,5 +1,14 @@
 from stream2sentence import generate_sentences
-from openai import OpenAI                   # pip install openai
+import os
+import unittest
+
+try:
+    from openai import OpenAI                   # pip install openai
+except ImportError as exc:
+    raise unittest.SkipTest("openai package is required for live LLM stream tests") from exc
+
+if not os.environ.get("OPENAI_API_KEY"):
+    raise unittest.SkipTest("OPENAI_API_KEY is required for live LLM stream tests")
 
 client = OpenAI()
 

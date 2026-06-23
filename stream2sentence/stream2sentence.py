@@ -21,13 +21,23 @@ from typing import (
 
 import emoji
 
+from stream2sentence.quick_yield_boundary import HOLD, REJECT, SPLIT, get_boundary_detector
+
 current_tokenizer = "nltk"
+current_language = "en"
 stanza_initialized = False
 nltk_initialized = False
 nlp = None
 
 
-def initialize_nltk(debug=False):
+def _normalize_tokenizer(tokenizer: str) -> str:
+    tokenizer = (tokenizer or "nltk").lower().replace("_", "-")
+    if tokenizer in {"rule-based", "rules"}:
+        return "rule-based"
+    return tokenizer
+
+
+def initialize_nltk(language: str = "en", debug=False):
     """
     Initializes NLTK by downloading required data for sentence tokenization.
     """
@@ -168,6 +178,8 @@ def _tokenize_sentences(text: str, tokenize_sentences=None) -> list[str]:
             import nltk
 
             sentences = nltk.tokenize.sent_tokenize(text)
+        elif current_tokenizer == "rule-based":
+            sentences = _rule_based_tokenize_sentences(text, current_language)
         elif current_tokenizer == "stanza":
             import stanza
 
@@ -181,14 +193,65 @@ def _tokenize_sentences(text: str, tokenize_sentences=None) -> list[str]:
     return sentences
 
 
+def _rule_based_tokenize_sentences(text: str, language: str = "en") -> list[str]:
+    detector = get_boundary_detector(language)
+    sentence_terminators = set(".?!。！？؟।")
+    closing_marks = "\"')]}”’»›"
+    sentences = []
+    start = 0
+    index = 0
+
+    while index < len(text):
+        char = text[index]
+        if char not in sentence_terminators:
+            index += 1
+            continue
+
+        segment = text[start:]
+        next_char = text[index + 1] if index + 1 < len(text) else None
+        action = detector.classify(segment, index - start, next_char)
+        if action != SPLIT:
+            index += 1
+            continue
+
+        end = index + 1
+        while end < len(text) and text[end] in sentence_terminators:
+            end += 1
+        while end < len(text) and text[end] in closing_marks:
+            end += 1
+
+        sentence = text[start:end].strip()
+        if sentence:
+            sentences.append(sentence)
+
+        while end < len(text) and text[end].isspace():
+            end += 1
+
+        start = end
+        index = end
+
+    tail = text[start:].strip()
+    if tail:
+        sentences.append(tail)
+
+    return sentences
+
+
 def init_tokenizer(tokenizer: str, language: str = "en", offline=False, debug=False):
     """
     Initializes the sentence tokenizer.
     """
+    global current_language, current_tokenizer
+    tokenizer = _normalize_tokenizer(tokenizer)
+    current_tokenizer = tokenizer
+    current_language = language
+
     if tokenizer == "nltk":
-        initialize_nltk(debug)
+        initialize_nltk(language, debug)
     elif tokenizer == "stanza":
         initialize_stanza(language, offline=offline)
+    elif tokenizer == "rule-based":
+        return
     else:
         logging.warning(f"Unknown tokenizer: {tokenizer}")
 
@@ -254,7 +317,7 @@ async def generate_sentences_async(
         tokenize_sentences (Callable): A function that tokenizes sentences
           from the input text. Defaults to None.
         tokenizer (str): The tokenizer to use for sentence tokenization.
-          Default is "nltk". Can be "nltk" or "stanza".
+          Default is "nltk". Can be "nltk", "stanza", or "rule-based".
         language (str): The language to use for sentence tokenization.
           Default is "en". Can be "multilingual" for stanze tokenizer.
         log_characters (bool): If True, logs each character to the console as
@@ -417,7 +480,7 @@ class SentenceSplitter:
             tokenize_sentences (Callable): A function that tokenizes sentences
             from the input text. Defaults to None.
             tokenizer (str): The tokenizer to use for sentence tokenization.
-            Default is "nltk". Can be "nltk" or "stanza".
+            Default is "nltk". Can be "nltk", "stanza", or "rule-based".
             language (str): The language to use for sentence tokenization.
             Default is "en". Can be "multilingual" for stanze tokenizer.
             log_characters (bool): If True, logs each character to the console as
@@ -447,14 +510,15 @@ class SentenceSplitter:
         """
 
         global current_tokenizer
-        current_tokenizer = tokenizer
-        init_tokenizer(current_tokenizer, language, debug)
+        current_tokenizer = _normalize_tokenizer(tokenizer)
+        init_tokenizer(current_tokenizer, language, debug=debug)
 
         self.input_buffer = collections.deque[str]()
         self.buffer = ""
         self.is_first_sentence = True
         self.word_count = 0  # Initialize word count
         self.last_delimiter_position = -1  # Position of last full sentence delimiter
+        self.pending_quick_yield_boundary = None
 
         # Adjust quick yield flags based on settings
         if quick_yield_every_fragment:
@@ -473,8 +537,9 @@ class SentenceSplitter:
         self.cleanup_text_links = cleanup_text_links
         self.cleanup_text_emojis = cleanup_text_emojis
         self.tokenize_sentences = tokenize_sentences
-        self.tokenizer = tokenizer
+        self.tokenizer = current_tokenizer
         self.language = language
+        self.quick_yield_boundary_detector = get_boundary_detector(language)
         self.log_characters = log_characters
         self.sentence_fragment_delimiters = sentence_fragment_delimiters
         self.full_sentence_delimiters = full_sentence_delimiters
@@ -484,6 +549,21 @@ class SentenceSplitter:
 
     def add(self, chunk: str):
         self.input_buffer.append(chunk)
+
+    def _consume_quick_yield_text(self, boundary_position=None):
+        if boundary_position is None:
+            text = self.buffer
+            self.buffer = ""
+        else:
+            text = self.buffer[:boundary_position + 1]
+            self.buffer = self.buffer[boundary_position + 1:].lstrip()
+
+        self.word_count = 0
+        self.pending_quick_yield_boundary = None
+        if not self.quick_yield_every_fragment:
+            self.is_first_sentence = False
+
+        return _clean_text(text, self.cleanup_text_links, self.cleanup_text_emojis)
 
     def stream(self):
         while self.input_buffer:
@@ -496,6 +576,23 @@ class SentenceSplitter:
                                 continue
 
                     self.buffer = (self.buffer + char).lstrip()
+
+                    if self.pending_quick_yield_boundary is not None:
+                        boundary_position = self.pending_quick_yield_boundary
+                        if boundary_position < len(self.buffer) - 1:
+                            action = self.quick_yield_boundary_detector.classify(
+                                self.buffer,
+                                boundary_position,
+                                self.buffer[boundary_position + 1],
+                            )
+                            if action != HOLD:
+                                self.pending_quick_yield_boundary = None
+                            if action == SPLIT:
+                                yield_text = self._consume_quick_yield_text(boundary_position)
+                                if self.debug:
+                                    print("\033[36mDebug: Yielding first sentence fragment: \"{}\" after confirming pending delimiter\033[0m".format(yield_text))
+                                yield yield_text
+                                continue
 
                     # Update word count on encountering space or sentence fragment delimiter
                     if char.isspace() or char in self.sentence_fragment_delimiters:
@@ -511,27 +608,33 @@ class SentenceSplitter:
                         and self.quick_yield_single_sentence_fragment
                     ):
 
-                        if (
-                            self.buffer[-1] in self.sentence_fragment_delimiters
-                            or char.isspace() and self.word_count >= self.force_first_fragment_after_words
-                        ):
-
-                            yield_text = _clean_text(
+                        if self.buffer[-1] in self.sentence_fragment_delimiters:
+                            boundary_position = len(self.buffer) - 1
+                            action = self.quick_yield_boundary_detector.classify(
                                 self.buffer,
-                                self.cleanup_text_links,
-                                self.cleanup_text_emojis)
+                                boundary_position,
+                            )
+                            if action == HOLD:
+                                self.pending_quick_yield_boundary = boundary_position
+                                continue
+                            if action == REJECT:
+                                continue
+
+                            yield_text = self._consume_quick_yield_text()
                             if self.debug:
-                                if self.buffer[-1] in self.sentence_fragment_delimiters:
-                                    print("\033[36mDebug: Yielding first sentence fragment: \"{}\" because buffer[-1] {} is sentence frag \033[0m".format(yield_text, self.buffer[-1]))
-                                else:
-                                    print("\033[36mDebug: Yielding first sentence fragment: \"{}\" because word_count {} is >= force_first_fragment_after_words \033[0m".format(yield_text, self.word_count))
+                                print("\033[36mDebug: Yielding first sentence fragment: \"{}\" because buffer[-1] is sentence frag \033[0m".format(yield_text))
 
                             yield yield_text
 
-                            self.buffer = ""
-                            self.word_count = 0
-                            if not self.quick_yield_every_fragment:
-                                self.is_first_sentence = False
+                            continue
+
+                        if char.isspace() and self.word_count >= self.force_first_fragment_after_words:
+                            word_count = self.word_count
+                            yield_text = self._consume_quick_yield_text()
+                            if self.debug:
+                                print("\033[36mDebug: Yielding first sentence fragment: \"{}\" because word_count {} is >= force_first_fragment_after_words \033[0m".format(yield_text, word_count))
+
+                            yield yield_text
 
                             continue
 
