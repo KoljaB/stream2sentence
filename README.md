@@ -74,6 +74,11 @@ The `generate_sentences()` function offers various parameters to fine-tune its b
   - Enhances sentence detection accuracy.
   - Default: 12 characters
 
+- `auto_context: bool = False`
+  - Yields safe sentence boundaries before the full `context_size` delay when the boundary heuristic and tokenizer agree.
+  - Falls back to the normal `context_size` and `context_size_look_overhead` behavior when the boundary is still ambiguous.
+  - Default: False
+
 - `minimum_sentence_length: int = 10`
   - Minimum character count for a text chunk to be considered a sentence.
   - Shorter fragments are buffered until this threshold is met.

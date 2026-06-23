@@ -343,6 +343,7 @@ async def generate_sentences_async(
     quick_yield_single_sentence_fragment: bool = False,
     quick_yield_for_all_sentences: bool = False,
     quick_yield_every_fragment: bool = False,
+    auto_context: bool = False,
     cleanup_text_links: bool = False,
     cleanup_text_emojis: bool = False,
     tokenize_sentences=None,
@@ -388,6 +389,9 @@ async def generate_sentences_async(
         quick_yield_every_fragment (bool): If set to True, the
           generator not only yield every sentence first fragment, but also every
           following fragment.
+        auto_context (bool): If True, safe sentence boundaries may be yielded
+          before the full context_size delay when the boundary detector and
+          tokenizer agree. Default is False.
         cleanup_text_links (bool): If True, removes hyperlinks from the text
           stream to ensure clean output.
         cleanup_text_emojis (bool): If True, filters out emojis from the text
@@ -433,6 +437,7 @@ async def generate_sentences_async(
         quick_yield_single_sentence_fragment=quick_yield_single_sentence_fragment,
         quick_yield_for_all_sentences=quick_yield_for_all_sentences,
         quick_yield_every_fragment=quick_yield_every_fragment,
+        auto_context=auto_context,
         cleanup_text_links=cleanup_text_links,
         cleanup_text_emojis=cleanup_text_emojis,
         tokenize_sentences=tokenize_sentences,
@@ -510,6 +515,7 @@ class SentenceSplitter:
         quick_yield_single_sentence_fragment: bool = False,
         quick_yield_for_all_sentences: bool = False,
         quick_yield_every_fragment: bool = False,
+        auto_context: bool = False,
         cleanup_text_links: bool = False,
         cleanup_text_emojis: bool = False,
         tokenize_sentences=None,
@@ -553,6 +559,9 @@ class SentenceSplitter:
             quick_yield_every_fragment (bool): If set to True, the
             generator not only yield every sentence first fragment, but also every
             following fragment.
+            auto_context (bool): If True, safe sentence boundaries may be
+            yielded before the full context_size delay when the boundary detector
+            and tokenizer agree. Default is False.
             cleanup_text_links (bool): If True, removes hyperlinks from the text
             stream to ensure clean output.
             cleanup_text_emojis (bool): If True, filters out emojis from the text
@@ -616,6 +625,7 @@ class SentenceSplitter:
         self.quick_yield_single_sentence_fragment = quick_yield_single_sentence_fragment
         self.quick_yield_for_all_sentences = quick_yield_for_all_sentences
         self.quick_yield_every_fragment = quick_yield_every_fragment
+        self.auto_context = auto_context
         self.cleanup_text_links = cleanup_text_links
         self.cleanup_text_emojis = cleanup_text_emojis
         self.tokenize_sentences = tokenize_sentences
@@ -649,6 +659,30 @@ class SentenceSplitter:
 
     def _is_quick_yield_pre_terminal_closing_mark(self, boundary_position):
         return self.buffer[boundary_position] in _QUICK_YIELD_PRE_TERMINAL_CLOSING_MARKS
+
+    def _auto_context_boundary_offset(self):
+        if not self.auto_context or self.last_delimiter_position < 0:
+            return None
+
+        boundary_position = self.last_delimiter_position
+        boundary_end = self._quick_yield_boundary_end(boundary_position)
+        if not self._has_quick_yield_lookahead(boundary_position):
+            return None
+
+        next_char = self.buffer[boundary_end + 1]
+        action = self.quick_yield_boundary_detector.classify(
+            self.buffer,
+            boundary_position,
+            next_char,
+        )
+        if action != SPLIT:
+            return None
+
+        return boundary_end + 1
+
+    def _auto_context_matches_tokenizer(self, sentences, boundary_offset):
+        offsets = _sentence_boundary_offsets(self.buffer, sentences)
+        return bool(offsets) and offsets[0] == boundary_offset
 
     def _consume_quick_yield_text(self, boundary_position=None):
         if boundary_position is None:
@@ -759,14 +793,28 @@ class SentenceSplitter:
 
                             continue
 
-                    # Continue accumulating characters if buffer is under minimum sentence length
-                    if len(self.buffer) <= self.minimum_sentence_length + self.context_size:
-
-                        continue
-
-                    # Update last delimiter position if a new delimiter is found
-                    if char in self.full_sentence_delimiters:
+                    if self.auto_context and char in self.full_sentence_delimiters:
                         self.last_delimiter_position = len(self.buffer) - 1
+
+                    context_ready = (
+                        len(self.buffer) > self.minimum_sentence_length + self.context_size
+                    )
+
+                    # Continue accumulating characters if buffer is under minimum sentence length
+                    if not context_ready:
+                        if (
+                            not self.auto_context
+                            or self.last_delimiter_position < 0
+                            or len(self.buffer) <= self.minimum_sentence_length
+                        ):
+                            continue
+
+                    elif char in self.full_sentence_delimiters:
+                        self.last_delimiter_position = len(self.buffer) - 1
+
+                    auto_context_boundary_offset = self._auto_context_boundary_offset()
+                    if not context_ready and auto_context_boundary_offset is None:
+                        continue
 
                     # Define context window for checking potential sentence boundaries
                     context_window_end_pos = len(self.buffer) - self.context_size - 1
@@ -814,11 +862,24 @@ class SentenceSplitter:
                     sentences = combined_sentences
 
                     # Process and yield sentences based on conditions
-                    if len(sentences) > 2 or (
-                        self.last_delimiter_position >= 0
-                        and context_window_start_pos
-                        <= self.last_delimiter_position
-                        <= context_window_end_pos
+                    auto_context_ready = (
+                        auto_context_boundary_offset is not None
+                        and self._auto_context_matches_tokenizer(
+                            sentences,
+                            auto_context_boundary_offset,
+                        )
+                    )
+                    if auto_context_ready or (
+                        context_ready
+                        and (
+                            len(sentences) > 2
+                            or (
+                                self.last_delimiter_position >= 0
+                                and context_window_start_pos
+                                <= self.last_delimiter_position
+                                <= context_window_end_pos
+                            )
+                        )
                     ):
 
                         if len(sentences) > 1:

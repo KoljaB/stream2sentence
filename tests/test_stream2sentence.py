@@ -646,6 +646,115 @@ class TestSentenceGenerator(unittest.TestCase):
             CONSENSUS_STRESS_EXPECTED,
         )
 
+    def test_auto_context_yields_before_fixed_context_window(self):
+        splitter = SentenceSplitter(
+            tokenizer="rule-based",
+            language="en",
+            minimum_sentence_length=1,
+            context_size=12,
+            context_size_look_overhead=12,
+            auto_context=True,
+        )
+
+        yielded = []
+        for char in "Hello world. N":
+            splitter.add(char)
+            yielded.extend(splitter.stream())
+
+        self.assertEqual(yielded, ["Hello world."])
+        self.assertEqual(splitter.buffer, "N")
+
+    def test_auto_context_disabled_keeps_fixed_context_window(self):
+        splitter = SentenceSplitter(
+            tokenizer="rule-based",
+            language="en",
+            minimum_sentence_length=1,
+            context_size=12,
+            context_size_look_overhead=12,
+            auto_context=False,
+        )
+
+        yielded = []
+        for char in "Hello world. N":
+            splitter.add(char)
+            yielded.extend(splitter.stream())
+
+        self.assertEqual(yielded, [])
+        self.assertEqual(splitter.buffer, "Hello world. N")
+
+    def test_auto_context_requires_consensus_tokenizer_agreement(self):
+        stream2sentence_module = importlib.import_module("stream2sentence.stream2sentence")
+        old_nltk_initialized = stream2sentence_module.nltk_initialized
+        stream2sentence_module.nltk_initialized = True
+        try:
+            splitter = SentenceSplitter(
+                tokenizer="nltk+rule-based",
+                language="en",
+                minimum_sentence_length=1,
+                context_size=12,
+                context_size_look_overhead=12,
+                auto_context=True,
+            )
+            with mock.patch(
+                "nltk.tokenize.sent_tokenize",
+                return_value=["Hello world. N"],
+            ):
+                yielded = []
+                for char in "Hello world. N":
+                    splitter.add(char)
+                    yielded.extend(splitter.stream())
+
+            self.assertEqual(yielded, [])
+            self.assertEqual(splitter.buffer, "Hello world. N")
+        finally:
+            stream2sentence_module.nltk_initialized = old_nltk_initialized
+
+    def test_auto_context_yields_when_consensus_tokenizer_agrees(self):
+        stream2sentence_module = importlib.import_module("stream2sentence.stream2sentence")
+        old_nltk_initialized = stream2sentence_module.nltk_initialized
+        stream2sentence_module.nltk_initialized = True
+        try:
+            splitter = SentenceSplitter(
+                tokenizer="nltk+rule-based",
+                language="en",
+                minimum_sentence_length=1,
+                context_size=12,
+                context_size_look_overhead=12,
+                auto_context=True,
+            )
+            with mock.patch(
+                "nltk.tokenize.sent_tokenize",
+                return_value=["Hello world.", "N"],
+            ):
+                yielded = []
+                for char in "Hello world. N":
+                    splitter.add(char)
+                    yielded.extend(splitter.stream())
+
+            self.assertEqual(yielded, ["Hello world."])
+            self.assertEqual(splitter.buffer, "N")
+        finally:
+            stream2sentence_module.nltk_initialized = old_nltk_initialized
+
+    def test_auto_context_requires_boundary_detector_split(self):
+        splitter = SentenceSplitter(
+            tokenize_sentences=lambda text: ["I met Dr.", "S"],
+            tokenizer="rule-based",
+            language="en",
+            minimum_sentence_length=1,
+            context_size=12,
+            context_size_look_overhead=12,
+            auto_context=True,
+        )
+
+        yielded = []
+        for char in "I met Dr. S":
+            splitter.add(char)
+            yielded.extend(splitter.stream())
+
+        self.assertEqual(yielded, [])
+        self.assertEqual(splitter.buffer, "I met Dr. S")
+
     def test_punctuated_name_continuations_are_exact(self):
         cases = [
             (
