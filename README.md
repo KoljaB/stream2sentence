@@ -4,6 +4,12 @@ Real-time processing and delivery of sentences from a continuous stream of chara
 
 > **Hint:** *If you're interested in state-of-the-art voice solutions you might also want to <strong>have a look at [Linguflex](https://github.com/KoljaB/Linguflex)</strong>, the original project from which stream2sentence is spun off. It lets you control your environment by speaking and is one of the most capable and sophisticated open-source assistants currently available.*
 
+## Demo
+
+https://github.com/user-attachments/assets/0428d806-4b30-47fa-9cfe-8fb42c95b2e4
+
+[CLI demo code (reproduces the video above)](tests/show_consensus_stress_split.py)
+
 ## Table of Contents
 
 - [Features](#features)
