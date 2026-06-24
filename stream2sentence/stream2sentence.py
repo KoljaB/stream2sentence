@@ -63,7 +63,12 @@ def initialize_nltk(language: str = "en", debug=False):
     try:
         import nltk
 
-        nltk.download("punkt_tab", quiet=not debug)
+        try:
+            nltk.data.find("tokenizers/punkt_tab")
+        except LookupError:
+            if not nltk.download("punkt_tab", quiet=not debug):
+                raise RuntimeError("Could not download nltk punkt_tab data")
+            nltk.data.find("tokenizers/punkt_tab")
         nltk_initialized = True
     except Exception as e:
         print(f"Error initializing nltk tokenizer: {e}")
@@ -424,8 +429,9 @@ async def generate_sentences_async(
           from the input text. Defaults to None.
         tokenizer (str): The tokenizer to use for sentence tokenization.
           Default is "nltk". Can be "nltk", "stanza", "rule-based", or
-          "nltk+rule-based". The "nltk+rule-based" tokenizer only splits at
-          sentence boundaries where NLTK and the rule-based tokenizer agree.
+          "nltk+rule-based". The "nltk+rule-based" tokenizer splits at
+          boundaries accepted by both NLTK and the rule-based tokenizer, plus
+          rule-based boundaries promoted by high-confidence local checks.
         language (str): The language to use for sentence tokenization.
           Default is "en". Can be "multilingual" for stanze tokenizer.
         log_characters (bool): If True, logs each character to the console as
@@ -599,8 +605,9 @@ class SentenceSplitter:
             from the input text. Defaults to None.
             tokenizer (str): The tokenizer to use for sentence tokenization.
             Default is "nltk". Can be "nltk", "stanza", "rule-based", or
-            "nltk+rule-based". The "nltk+rule-based" tokenizer only splits at
-            sentence boundaries where NLTK and the rule-based tokenizer agree.
+            "nltk+rule-based". The "nltk+rule-based" tokenizer splits at
+            boundaries accepted by both NLTK and the rule-based tokenizer, plus
+            rule-based boundaries promoted by high-confidence local checks.
             language (str): The language to use for sentence tokenization.
             Default is "en". Can be "multilingual" for stanze tokenizer.
             log_characters (bool): If True, logs each character to the console as

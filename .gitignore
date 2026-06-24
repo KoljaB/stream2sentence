@@ -1,5 +1,7 @@
 tests_private/
 test_env/
+.codex_tmp_*/
+docs/pr-*.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

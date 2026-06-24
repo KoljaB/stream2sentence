@@ -447,6 +447,23 @@ _EN_INITIALISM_CONTINUATION_FIRST_WORDS = {
     },
 }
 
+_EN_INITIALISM_CONTINUATION_PHRASES = {
+    "u.k.": {
+        ("campaign", "for"),
+    },
+    "u.n.": {
+        ("paris", "agreement"),
+        ("paris", "climate"),
+    },
+    "u.s.": {
+        ("green", "party"),
+        ("pacific", "island"),
+        ("tv", "network"),
+        ("tv", "series"),
+        ("tv", "show"),
+    },
+}
+
 _EN_TIME_ABBREVIATION_CONTINUATIONS = {
     "monday",
     "tuesday",
@@ -1248,7 +1265,7 @@ class QuickYieldBoundaryDetector:
         abbreviation = self._matching_abbreviation(left)
         if (
             abbreviation in _EN_AMBIGUOUS_ABBREVIATIONS
-            and self._is_strong_sentence_starter(clean_token)
+            and self._is_capitalized_strong_sentence_starter(clean_token)
         ):
             return True
 
@@ -1256,7 +1273,7 @@ class QuickYieldBoundaryDetector:
         if not self._is_dotted_initialism(current_token):
             return False
 
-        if self._is_strong_sentence_starter(clean_token):
+        if self._is_capitalized_strong_sentence_starter(clean_token):
             return True
 
         previous = self._previous_token_before_current(left)
@@ -1425,7 +1442,13 @@ class QuickYieldBoundaryDetector:
             return HOLD
         if (
             abbreviation.count(".") > 1
-            and folded in _EN_INITIALISM_CONTINUATION_WORDS
+            and (
+                folded in _EN_INITIALISM_CONTINUATION_WORDS
+                or (
+                    folded.endswith("'s")
+                    and folded[:-2] in _EN_INITIALISM_CONTINUATION_WORDS
+                )
+            )
         ):
             return REJECT
         initialism_word_action = self._classify_initialism_word_continuation(
@@ -1494,7 +1517,7 @@ class QuickYieldBoundaryDetector:
             return REJECT
         if abbreviation == "no." and len(clean_token) == 1 and clean_token.isupper():
             return REJECT
-        if self._is_strong_sentence_starter(clean_token):
+        if self._is_capitalized_strong_sentence_starter(clean_token):
             return SPLIT
         if clean_token[0].islower() or clean_token[0].isdigit():
             return REJECT
@@ -1528,6 +1551,14 @@ class QuickYieldBoundaryDetector:
         if abbreviation.count(".") <= 1:
             return None
 
+        phrase_action = self._classify_next_phrase(
+            buffer,
+            delimiter_index,
+            _EN_INITIALISM_CONTINUATION_PHRASES.get(abbreviation, ()),
+        )
+        if phrase_action is not None:
+            return phrase_action
+
         words = _EN_INITIALISM_CONTINUATION_FIRST_WORDS.get(abbreviation)
         if not words:
             return None
@@ -1541,6 +1572,8 @@ class QuickYieldBoundaryDetector:
             return HOLD
 
         if clean_token in words:
+            return REJECT
+        if clean_token.endswith("'s") and clean_token[:-2] in words:
             return REJECT
         if not ended and any(word.startswith(clean_token) for word in words):
             return HOLD
@@ -2219,6 +2252,11 @@ class QuickYieldBoundaryDetector:
         token = token.strip(_OPENING_MARKS + _CLOSING_MARKS + ".,;:!?")
         return token.casefold() in _EN_STRONG_SENTENCE_STARTERS
 
+    @staticmethod
+    def _is_capitalized_strong_sentence_starter(token):
+        token = token.strip(_OPENING_MARKS + _CLOSING_MARKS + ".,;:!?")
+        return token[:1].isupper() and token.casefold() in _EN_STRONG_SENTENCE_STARTERS
+
     def _left_has_initials_phrase(self, buffer, delimiter_index):
         left = buffer[: delimiter_index + 1]
         tokens = [
@@ -2306,7 +2344,7 @@ class QuickYieldBoundaryDetector:
             if len(right) > len(token) and right[len(token)] == ".":
                 return REJECT
         if current_token.count(".") > 1:
-            if self._is_strong_sentence_starter(clean_token):
+            if self._is_capitalized_strong_sentence_starter(clean_token):
                 return SPLIT
             return REJECT
 
@@ -2405,6 +2443,7 @@ class QuickYieldBoundaryDetector:
 
     @staticmethod
     def _is_dotted_initialism(token):
+        token = token.strip(_OPENING_MARKS + _CLOSING_MARKS)
         parts = token.split(".")
         return (
             len(parts) >= 2

@@ -23,6 +23,31 @@ from typing import Callable, Iterable, Sequence
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LANGUAGE_CONTEXTS_PATH = REPO_ROOT / "stream2sentence" / "data" / "language_contexts.json"
 DEFAULT_SENTENCE_DB = REPO_ROOT / "downloads" / "tatoeba" / "cleaned_eng_v1" / "cleaner.sqlite"
+DEFAULT_RULE_BASED_LANGUAGES = ["en", "es", "fr", "de", "zh", "ja"]
+DEFAULT_NLTK_LANGUAGES = ["en"]
+
+
+def configure_text_output() -> None:
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
+def uses_nltk_tokenizer(tokenizer: str) -> bool:
+    normalized = (tokenizer or "").lower().replace("_", "-")
+    return normalized in {
+        "nltk",
+        "consensus",
+        "nltk+rule-based",
+        "nltk-rule-based",
+        "nltk+rules",
+        "nltk-rules",
+    }
+
+
+configure_text_output()
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -829,10 +854,11 @@ def print_report(
         database_scope = "all" if args.database_sample_size == 0 else str(args.database_sample_size)
         print(f"database_sample_size: {database_scope}")
         print(f"database_loaded_sentences: {args.database_loaded_sentences}")
+    language_args = " ".join(args.languages)
     print(
         f"rerun: {sys.executable} tools/fuzz_sentence_boundaries.py "
         f"--seed {seed} --duration {args.duration} --tokenizer {args.tokenizer} "
-        f"--source {args.source}"
+        f"--source {args.source} --languages {language_args}"
     )
     print()
 
@@ -927,8 +953,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--languages",
         nargs="+",
-        default=["en", "es", "fr", "de", "zh", "ja"],
-        help="Language codes to sample. Each generated text block uses one language.",
+        default=None,
+        help=(
+            "Language codes to sample. Defaults to en for NLTK-backed tokenizers "
+            "and en/es/fr/de/zh/ja for rule-based tokenizer runs."
+        ),
     )
     return parser.parse_args()
 
@@ -937,6 +966,12 @@ def main() -> int:
     args = parse_args()
     if args.never_split_numbers is None:
         args.never_split_numbers = args.source != "database"
+    if args.languages is None:
+        args.languages = (
+            list(DEFAULT_NLTK_LANGUAGES)
+            if uses_nltk_tokenizer(args.tokenizer)
+            else list(DEFAULT_RULE_BASED_LANGUAGES)
+        )
 
     seed = args.seed if args.seed is not None else time.time_ns()
     rng = random.Random(seed)

@@ -703,6 +703,22 @@ class TestSentenceGenerator(unittest.TestCase):
             stream2sentence_module.current_tokenizer = old_tokenizer
             stream2sentence_module.current_language = old_language
 
+    def test_initialize_nltk_uses_installed_punkt_tab_without_download(self):
+        stream2sentence_module = importlib.import_module("stream2sentence.stream2sentence")
+        old_initialized = stream2sentence_module.nltk_initialized
+
+        try:
+            stream2sentence_module.nltk_initialized = False
+            with mock.patch("nltk.data.find", return_value=object()) as find:
+                with mock.patch("nltk.download") as download:
+                    stream2sentence_module.initialize_nltk()
+
+            find.assert_called_once_with("tokenizers/punkt_tab")
+            download.assert_not_called()
+            self.assertTrue(stream2sentence_module.nltk_initialized)
+        finally:
+            stream2sentence_module.nltk_initialized = old_initialized
+
     def test_rule_based_tokenizer_uses_rule_based_sentences(self):
         stream2sentence_module = importlib.import_module("stream2sentence.stream2sentence")
         old_tokenizer = stream2sentence_module.current_tokenizer
@@ -1667,6 +1683,21 @@ class TestSentenceGenerator(unittest.TestCase):
                 "U.N. Environmental Programme warned today.",
                 "E.U. Carbon Border Adjustment Mechanism applied today.",
             ],
+            "initialism phrase continuations": [
+                "The first U.S. TV show aired yesterday.",
+                "A U.S. TV series premiered yesterday.",
+                "The U.S. Green Party is not affiliated with the international movement.",
+                "On the U.S. Pacific island state of Hawaii, birds are threatened.",
+                "The U.K. Campaign for Dark Skies criticized city lights.",
+                "The U.N. Paris climate agreement limited warming targets.",
+                "They are part of a project in the U.S. that trains dogs.",
+                "The U.S. Army's Corps of Engineers released new guidelines.",
+                "The U.S. Navy's fleet arrived yesterday.",
+            ],
+            "marked initials before names": [
+                'He signed one of his frescoes "C. Brumidi, Artist-Citizen of the U.S."',
+                "The plaque credited 'J. Rivera, Architect.'",
+            ],
         }
 
         for family, cases in cases_by_family.items():
@@ -1708,11 +1739,117 @@ class TestSentenceGenerator(unittest.TestCase):
                 "I met A. Karpov today.",
                 ["I met A. Karpov today."],
             ),
+            (
+                "They are based in the U.S. That changed.",
+                ["They are based in the U.S.", "That changed."],
+            ),
         ]
 
         for text, expected in cases:
             with self.subTest(text=text):
                 self.assertAutoContextSentencesForBoundaryTokenizers(text, expected)
+
+    def test_auto_context_initialism_phrase_continuations_stay_bounded(self):
+        cases = [
+            (
+                "I moved to the U.S. TV was broken.",
+                ["I moved to the U.S.", "TV was broken."],
+            ),
+            (
+                "I visited the U.K. Campaign staff called later.",
+                ["I visited the U.K.", "Campaign staff called later."],
+            ),
+            (
+                "I left the U.S. Armyworms appeared in the garden.",
+                ["I left the U.S.", "Armyworms appeared in the garden."],
+            ),
+        ]
+
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    list(generate_sentences(
+                        list(text),
+                        tokenizer="rule-based",
+                        language="en",
+                        minimum_sentence_length=1,
+                        minimum_first_fragment_length=1,
+                        context_size=1,
+                        context_size_look_overhead=128,
+                        auto_context=True,
+                    )),
+                    expected,
+                )
+
+    def test_auto_context_holds_partial_initialism_phrase_prefix(self):
+        splitter = SentenceSplitter(
+            tokenizer="rule-based",
+            language="en",
+            minimum_sentence_length=1,
+            minimum_first_fragment_length=1,
+            context_size=1,
+            context_size_look_overhead=128,
+            auto_context=True,
+        )
+
+        yielded = []
+        for char in "The first U.S. TV sh":
+            splitter.add(char)
+            yielded.extend(splitter.stream())
+
+        self.assertEqual(yielded, [])
+
+    def test_auto_context_marked_initials_keep_counterexamples_splittable(self):
+        text = 'The note said "C. It changed."'
+        self.assertEqual(
+            list(generate_sentences(
+                list(text),
+                tokenizer="rule-based",
+                language="en",
+                minimum_sentence_length=1,
+                minimum_first_fragment_length=1,
+                context_size=1,
+                context_size_look_overhead=128,
+                auto_context=True,
+            )),
+            ['The note said "C.', 'It changed."'],
+        )
+
+    def test_auto_context_holds_partial_marked_initial_name_prefix(self):
+        splitter = SentenceSplitter(
+            tokenizer="rule-based",
+            language="en",
+            minimum_sentence_length=1,
+            minimum_first_fragment_length=1,
+            context_size=1,
+            context_size_look_overhead=128,
+            auto_context=True,
+        )
+
+        yielded = []
+        for char in 'He signed one of his frescoes "C. Br':
+            splitter.add(char)
+            yielded.extend(splitter.stream())
+
+        self.assertEqual(yielded, [])
+
+    def test_auto_context_holds_partial_lowercase_initialism_continuation(self):
+        splitter = SentenceSplitter(
+            tokenizer="rule-based",
+            language="en",
+            minimum_sentence_length=1,
+            minimum_first_fragment_length=1,
+            context_size=1,
+            context_size_look_overhead=128,
+            auto_context=True,
+        )
+
+        yielded = []
+        for char in "They are part of a project in the U.S. tha":
+            splitter.add(char)
+            yielded.extend(splitter.stream())
+
+        self.assertEqual(yielded, [])
 
     def test_auto_context_holds_partial_legal_roman_numeral_prefix(self):
         for tokenizer in ("rule-based", AUTO_CONTEXT_WORKFLOW_TOKENIZER):

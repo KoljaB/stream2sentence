@@ -16,6 +16,9 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
+TOKENIZER_OPTIONS = {"nltk+rule-based", "rule-based", "nltk", "stanza"}
+
+
 HTML = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -441,10 +444,19 @@ HTML = r"""<!doctype html>
         <div class="brand-mark">S2</div>
         <div class="brand-title">
           <strong>stream2sentence live lab</strong>
-          <span>Consensus tokenizer, character-by-character</span>
+          <span>Tokenizer-selectable, character-by-character</span>
         </div>
       </div>
       <div class="controls">
+        <div class="field">
+          <label for="tokenizer">Tokenizer</label>
+          <select id="tokenizer">
+            <option value="nltk+rule-based" selected>nltk+rule-based</option>
+            <option value="rule-based">rule-based</option>
+            <option value="nltk">nltk</option>
+            <option value="stanza">stanza</option>
+          </select>
+        </div>
         <div class="field">
           <label for="delay">Delay</label>
           <select id="delay">
@@ -504,6 +516,7 @@ HTML = r"""<!doctype html>
     const sentences = document.querySelector("#sentences");
     const empty = document.querySelector("#empty");
     const startStop = document.querySelector("#startStop");
+    const tokenizer = document.querySelector("#tokenizer");
     const delay = document.querySelector("#delay");
     const autoContext = document.querySelector("#autoContext");
     const neverSplitNumbers = document.querySelector("#neverSplitNumbers");
@@ -520,6 +533,7 @@ HTML = r"""<!doctype html>
       running = next;
       startStop.textContent = next ? "Stop" : "Start";
       startStop.classList.toggle("stop", next);
+      tokenizer.disabled = next;
       delay.disabled = next;
       autoContext.disabled = next;
       neverSplitNumbers.disabled = next;
@@ -593,6 +607,7 @@ HTML = r"""<!doctype html>
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             text,
+            tokenizer: tokenizer.value,
             delay_ms: Number(delay.value),
             auto_context: autoContext.checked,
             never_split_numbers: neverSplitNumbers.checked
@@ -701,11 +716,16 @@ class SentenceSplitterUiHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("content-length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             text = str(payload.get("text", ""))
+            tokenizer = str(payload.get("tokenizer", "nltk+rule-based"))
             delay_ms = int(payload.get("delay_ms", 50))
             auto_context = payload.get("auto_context") is True
             never_split_numbers = payload.get("never_split_numbers") is True
         except Exception:
             self.send_error(400, "Invalid JSON payload")
+            return
+
+        if tokenizer not in TOKENIZER_OPTIONS:
+            self.send_error(400, "Invalid tokenizer")
             return
 
         delay_seconds = max(delay_ms, 0) / 1000
@@ -717,7 +737,7 @@ class SentenceSplitterUiHandler(BaseHTTPRequestHandler):
 
         try:
             splitter = self.sentence_splitter_cls(
-                tokenizer="nltk+rule-based",
+                tokenizer=tokenizer,
                 language="en",
                 minimum_sentence_length=1,
                 context_size=12,

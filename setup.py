@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="stream2sentence", 
-    version="0.3.3",
+    version="1.0.0",
     author="Kolja Beigel",
     author_email="kolja.beigel@web.de",
     description="Real-time processing and delivery of sentences from a continuous stream of characters or text chunks.",
@@ -19,7 +19,7 @@ setuptools.setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires='>=3.6',
+    python_requires='>=3.10',
     install_requires=[
         'nltk==3.9.4',
         'emoji==2.15.0',

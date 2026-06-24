@@ -54,6 +54,20 @@ This ends now.
 
 One main use case of this library is enable fast text to speech synthesis in the context of character feeds generated from large language models: this library enables fastest possible access to a complete sentence or sentence fragment (using the quick_yield_single_sentence_fragment flag) that then can be synthesized in realtime. The usage of this is demonstrated in the test_stream_from_llm.py file in the tests directory.
 
+### Recommended English setup
+
+For English streams, the recommended configuration is `tokenizer="nltk+rule-based"` with `auto_context=True`. This combines NLTK sentence splitting with stream2sentence's local boundary checks and allows safe sentence boundaries to be yielded earlier than the fixed context window when both checks support the split.
+
+```python
+for sentence in generate_sentences(
+    text_stream,
+    tokenizer="nltk+rule-based",
+    language="en",
+    auto_context=True,
+):
+    print(sentence)
+```
+
 ## Configuration
 
 The `generate_sentences()` function offers various parameters to fine-tune its behavior:
@@ -77,6 +91,7 @@ The `generate_sentences()` function offers various parameters to fine-tune its b
 - `auto_context: bool = False`
   - Yields safe sentence boundaries before the full `context_size` delay when the boundary heuristic and tokenizer agree.
   - Falls back to the normal `context_size` and `context_size_look_overhead` behavior when the boundary is still ambiguous.
+  - Recommended for English when used with `tokenizer="nltk+rule-based"`.
   - Default: False
 
 - `minimum_sentence_length: int = 10`
@@ -129,7 +144,8 @@ These parameters control how quickly and frequently the generator yields sentenc
 
 - `tokenizer: str = "nltk"`
   - Specifies the tokenizer to use. Options: "nltk", "stanza", "rule-based", or "nltk+rule-based"
-  - "nltk+rule-based" only splits where NLTK and the rule-based heuristic tokenizer agree on the sentence boundary.
+  - "nltk+rule-based" splits at boundaries accepted by both NLTK and the rule-based heuristic tokenizer, plus rule-based boundaries promoted by high-confidence local checks.
+  - Recommended for English, especially with `auto_context=True`.
   - Default: "nltk"
 
 - `language: str = "en"`
