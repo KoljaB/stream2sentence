@@ -1,4 +1,5 @@
 import importlib
+import inspect
 import os
 import re
 import unittest
@@ -20,6 +21,7 @@ def single_sentence_tokenizer(text):
 
 
 TOKENIZERS_UNDER_TEST = ("nltk", "rule-based")
+AUTO_CONTEXT_WORKFLOW_TOKENIZER = "nltk+rule-based"
 RUN_STANZA_INTEGRATION = os.environ.get("STREAM2SENTENCE_RUN_STANZA_TESTS") == "1"
 
 
@@ -54,6 +56,7 @@ def quick_yield_sentences(
     tokenize_sentences=simple_sentence_tokenizer,
     language="en",
     tokenizer="nltk",
+    **kwargs,
 ):
     stream2sentence_module = importlib.import_module("stream2sentence.stream2sentence")
     nltk_initialized = stream2sentence_module.nltk_initialized
@@ -67,6 +70,7 @@ def quick_yield_sentences(
             tokenize_sentences=tokenize_sentences,
             tokenizer=tokenizer,
             language=language,
+            **kwargs,
         ))
     finally:
         stream2sentence_module.nltk_initialized = nltk_initialized
@@ -74,12 +78,35 @@ def quick_yield_sentences(
 
 class TestSentenceGenerator(unittest.TestCase):
 
-    def assertQuickYieldSingleSentence(self, text, language="en"):
+    def test_new_options_are_appended_after_032_positional_parameters(self):
+        expected_tail = [
+            "cleanup_text_links",
+            "cleanup_text_emojis",
+            "tokenize_sentences",
+            "tokenizer",
+            "language",
+            "log_characters",
+            "sentence_fragment_delimiters",
+            "full_sentence_delimiters",
+            "force_first_fragment_after_words",
+            "filter_first_non_alnum_characters",
+            "debug",
+            "auto_context",
+            "never_split_numbers",
+        ]
+
+        for callable_ in (generate_sentences, generate_sentences_async, SentenceSplitter):
+            with self.subTest(callable_=callable_):
+                names = list(inspect.signature(callable_).parameters)
+                self.assertEqual(names[-len(expected_tail):], expected_tail)
+
+    def assertQuickYieldSingleSentence(self, text, language="en", **kwargs):
         self.assertQuickYieldSentences(
             text,
             [text],
             tokenize_sentences=single_sentence_tokenizer,
             language=language,
+            **kwargs,
         )
 
     def assertQuickYieldSentences(
@@ -88,6 +115,7 @@ class TestSentenceGenerator(unittest.TestCase):
         expected,
         tokenize_sentences=simple_sentence_tokenizer,
         language="en",
+        **kwargs,
     ):
         for tokenizer in TOKENIZERS_UNDER_TEST:
             with self.subTest(tokenizer=tokenizer, text=text):
@@ -97,6 +125,7 @@ class TestSentenceGenerator(unittest.TestCase):
                         tokenize_sentences=tokenize_sentences,
                         language=language,
                         tokenizer=tokenizer,
+                        **kwargs,
                     ),
                     expected,
                 )
@@ -107,6 +136,38 @@ class TestSentenceGenerator(unittest.TestCase):
                 stream = source() if callable(source) else source
                 self.assertEqual(
                     list(generate_sentences(stream, tokenizer=tokenizer, **kwargs)),
+                    expected,
+                )
+
+    def assertAutoContextSentences(self, text, expected):
+        self.assertEqual(
+            list(generate_sentences(
+                list(text),
+                tokenizer="nltk+rule-based",
+                language="en",
+                minimum_sentence_length=1,
+                minimum_first_fragment_length=1,
+                context_size=1,
+                context_size_look_overhead=128,
+                auto_context=True,
+            )),
+            expected,
+        )
+
+    def assertAutoContextSentencesForBoundaryTokenizers(self, text, expected):
+        for tokenizer in ("rule-based", AUTO_CONTEXT_WORKFLOW_TOKENIZER):
+            with self.subTest(tokenizer=tokenizer, text=text):
+                self.assertEqual(
+                    list(generate_sentences(
+                        list(text),
+                        tokenizer=tokenizer,
+                        language="en",
+                        minimum_sentence_length=1,
+                        minimum_first_fragment_length=1,
+                        context_size=1,
+                        context_size_look_overhead=128,
+                        auto_context=True,
+                    )),
                     expected,
                 )
 
@@ -316,6 +377,21 @@ class TestSentenceGenerator(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertQuickYieldSingleSentence(text)
 
+    def test_quick_yield_does_not_split_bare_integer_periods(self):
+        cases = [
+            "The plan includes step 1. setup before step 2. train today.",
+            "The chess line is 1. d4 Nf6 2. c4 e6 3. Nc3 Bb4+ today.",
+            "The score was 3. Next month it improved.",
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertQuickYieldSingleSentence(text, never_split_numbers=True)
+
+    def test_quick_yield_uses_default_numeric_period_policy(self):
+        text = "The score was 3. Next month it improved."
+        expected = ["The score was 3.", "Next month it improved."]
+        self.assertQuickYieldSentences(text, expected)
+
     def test_quick_yield_does_not_split_technical_tokens(self):
         cases = [
             "Version v2.0.1 is available now.",
@@ -476,6 +552,8 @@ class TestSentenceGenerator(unittest.TestCase):
         cases = [
             "I called Dr. Smith today.",
             "The meeting is at 3 p.m. tomorrow.",
+            "The launch is at 3:22 p.m. EDT today.",
+            "The call starts at 9:00 a.m. PST tomorrow.",
             "Use e.g. apples in the list.",
             "Smith et al. reported the result.",
             "See op. cit. for details.",
@@ -484,6 +562,24 @@ class TestSentenceGenerator(unittest.TestCase):
             "See Fig. 2 in the paper.",
             "The office is on St. Patrick Avenue today.",
             "The company is Acme Inc. today.",
+            "The U.S. Bureau responded today.",
+            "The U.S. Constitution matters today.",
+            "The U.S. Environmental Protection Agency responded today.",
+            "The U.S. Endangered Species Act applies today.",
+            "The U.S. Food and Drug Administration issued guidance today.",
+            "The U.S. East Coast braced for rain today.",
+            "The U.S. Marines arrived today.",
+            "The U.S. Memory Championships started today.",
+            "The U.S. Minerals Management Service responded today.",
+            "The U.S. Securities and Exchange Commission responded today.",
+            "The U.S. Vice President spoke today.",
+            "U.N. Secretary-General Antonio Guterres spoke today.",
+            "The U.N. Children\u2019s Fund responded today.",
+            "The U.N. High Commissioner for Human Rights spoke today.",
+            "The U.N. Atlas of the Oceans lists coastal cities today.",
+            "A. Karpov vs. B. Spassky played today.",
+            "A. Karpov won the match today.",
+            "The meeting is at 3 p.m. Monday.",
         ]
         for text in cases:
             with self.subTest(text=text):
@@ -495,6 +591,36 @@ class TestSentenceGenerator(unittest.TestCase):
             ('"Hello!" Next.', ['"Hello!"', "Next."]),
             ('"Hello?" Next.', ['"Hello?"', "Next."]),
             ('"Really)." Next.', ['"Really)."', "Next."]),
+        ]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertQuickYieldSentences(text, expected)
+
+    def test_quick_yield_keeps_lowercase_continuations_after_closing_marks(self):
+        cases = [
+            'The status label "Ready." stayed visible during the demo.',
+            'Maya asked "done?" before the timer started.',
+            'The checklist item {ready.} stayed visible until noon.',
+            'The checklist item (done.) stayed visible until noon.',
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertQuickYieldSingleSentence(text)
+
+    def test_quick_yield_keeps_comma_continuation_after_question_mark(self):
+        cases = [
+            "The headline mentioned Guess?, and the editor left it unchanged.",
+            '"Really?", she asked before leaving.',
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertQuickYieldSingleSentence(text)
+
+    def test_quick_yield_splits_after_terminal_punctuation_clusters(self):
+        cases = [
+            ("Wait?! Next.", ["Wait?!", "Next."]),
+            ('"Wait?!" Next.', ['"Wait?!"', "Next."]),
+            ("Stop!! Next.", ["Stop!!", "Next."]),
         ]
         for text, expected in cases:
             with self.subTest(text=text):
@@ -521,6 +647,22 @@ class TestSentenceGenerator(unittest.TestCase):
             (
                 "The value is ca. 10 today. Continue.",
                 ["The value is ca. 10 today.", "Continue."],
+            ),
+            (
+                "The answer is A. Then it changed.",
+                ["The answer is A.", "Then it changed."],
+            ),
+            (
+                "John is as old as I. Tom disagreed.",
+                ["John is as old as I.", "Tom disagreed."],
+            ),
+            (
+                "He likes traveling and so do I. Long trips are fun.",
+                ["He likes traveling and so do I.", "Long trips are fun."],
+            ),
+            (
+                "A. Karpov won the match today.",
+                ["A. Karpov won the match today."],
             ),
         ]
         for text, expected in cases:
@@ -582,7 +724,11 @@ class TestSentenceGenerator(unittest.TestCase):
                         stream2sentence_module._tokenize_sentences("One. Two."),
                         ["One.", "Two."],
                     )
-                    rule_based_tokenize.assert_called_once_with("One. Two.", "en")
+                    rule_based_tokenize.assert_called_once_with(
+                        "One. Two.",
+                        "en",
+                        never_split_numbers=False,
+                    )
         finally:
             stream2sentence_module.current_tokenizer = old_tokenizer
             stream2sentence_module.current_language = old_language
@@ -609,7 +755,11 @@ class TestSentenceGenerator(unittest.TestCase):
                     ["One. Two."],
                 )
                 sent_tokenize.assert_called_once_with(text)
-                rule_based_tokenize.assert_called_once_with(text, "en")
+                rule_based_tokenize.assert_called_once_with(
+                    text,
+                    "en",
+                    never_split_numbers=False,
+                )
 
     def test_consensus_tokenizer_keeps_shared_boundaries(self):
         stream2sentence_module = importlib.import_module("stream2sentence.stream2sentence")
@@ -755,6 +905,905 @@ class TestSentenceGenerator(unittest.TestCase):
         self.assertEqual(yielded, [])
         self.assertEqual(splitter.buffer, "I met Dr. S")
 
+    def test_auto_context_holds_known_initialism_continuation_words(self):
+        cases = [
+            (
+                "The U.N. Development Programme responded today.",
+                "The U.N. Development ",
+            ),
+            (
+                "The U.N. Security Council met today.",
+                "The U.N. Security ",
+            ),
+            (
+                "The U.N. Secretariat issued a statement today.",
+                "The U.N. Secretariat ",
+            ),
+            (
+                "The U.N. Framework Convention remains in force today.",
+                "The U.N. Framework ",
+            ),
+            (
+                "The U.N. Economic and Social Council met today.",
+                "The U.N. Economic ",
+            ),
+            (
+                "The U.N. Relief and Works Agency responded today.",
+                "The U.N. Relief ",
+            ),
+            (
+                "The U.S. Supreme Court ruled today.",
+                "The U.S. Supreme ",
+            ),
+            (
+                "The U.S. Capitol Police responded today.",
+                "The U.S. Capitol ",
+            ),
+            (
+                "The U.S. Civil War changed the country today.",
+                "The U.S. Civil ",
+            ),
+            (
+                "The U.S. Olympic Committee released the roster today.",
+                "The U.S. Olympic ",
+            ),
+            (
+                "The U.S. Olympic team won today.",
+                "The U.S. Olympic ",
+            ),
+            (
+                "The U.S. Open begins Monday.",
+                "The U.S. Open ",
+            ),
+            (
+                "The U.S. Naval Academy admitted new midshipmen today.",
+                "The U.S. Naval ",
+            ),
+            (
+                "The U.S. Tax Court issued an opinion today.",
+                "The U.S. Tax ",
+            ),
+            (
+                "The U.S. Fish and Wildlife Service announced a rule today.",
+                "The U.S. Fish ",
+            ),
+            (
+                "The U.S. Forest Service closed the trail today.",
+                "The U.S. Forest ",
+            ),
+            (
+                "The U.S. Secret Service investigated the incident today.",
+                "The U.S. Secret ",
+            ),
+            (
+                "The U.S. Virgin Islands reported the result today.",
+                "The U.S. Virgin ",
+            ),
+            (
+                "The U.S. Women's national team won today.",
+                "The U.S. Women's ",
+            ),
+            (
+                "The U.S. Soccer team will play today.",
+                "The U.S. Soccer ",
+            ),
+            (
+                "The U.S. Botanic Garden opened today.",
+                "The U.S. Botanic ",
+            ),
+            (
+                "Members of the U.S. House of Representatives are elected today.",
+                "Members of the U.S. House ",
+            ),
+            (
+                "The U.S. Marine Corps deployed today.",
+                "The U.S. Marine ",
+            ),
+            (
+                "The U.S. State Department responded today.",
+                "The U.S. State ",
+            ),
+            (
+                "The U.S. Republican Party changed its platform today.",
+                "The U.S. Republican ",
+            ),
+            (
+                "The E.U. Commission responded today.",
+                "The E.U. Commission ",
+            ),
+            (
+                "The E.U. Digital Markets Act applies today.",
+                "The E.U. Digital ",
+            ),
+            (
+                "The E.U. AI Act passed today.",
+                "The E.U. AI ",
+            ),
+            (
+                "The E.U. General Data Protection Regulation applies today.",
+                "The E.U. General ",
+            ),
+            (
+                "The U.K. Prime Minister spoke today.",
+                "The U.K. Prime ",
+            ),
+            (
+                "The U.K. Foreign Office responded today.",
+                "The U.K. Foreign ",
+            ),
+            (
+                "The U.K. Home Office issued guidance today.",
+                "The U.K. Home ",
+            ),
+            (
+                "The D.C. Circuit ruled today.",
+                "The D.C. Circuit ",
+            ),
+            (
+                "The D.C. Council voted today.",
+                "The D.C. Council ",
+            ),
+        ]
+
+        for text, prefix in cases:
+            with self.subTest(text=text):
+                splitter = SentenceSplitter(
+                    tokenizer="rule-based",
+                    language="en",
+                    minimum_sentence_length=1,
+                    context_size=1,
+                    context_size_look_overhead=128,
+                    auto_context=True,
+                )
+
+                yielded = []
+                for char in prefix:
+                    splitter.add(char)
+                    yielded.extend(splitter.stream())
+
+                self.assertEqual(yielded, [])
+                self.assertEqual(
+                    list(generate_sentences(
+                        list(text),
+                        tokenizer="rule-based",
+                        language="en",
+                        minimum_sentence_length=1,
+                        context_size=1,
+                        context_size_look_overhead=128,
+                        auto_context=True,
+                    )),
+                    [text],
+                )
+
+    def test_auto_context_splits_after_initialisms_before_unlisted_words(self):
+        cases = [
+            (
+                "He lives in the U.S. It is large.",
+                "He lives in the U.S. It ",
+                ["He lives in the U.S."],
+                "It ",
+            ),
+            (
+                "The report mentions the E.U. It changed.",
+                "The report mentions the E.U. It ",
+                ["The report mentions the E.U."],
+                "It ",
+            ),
+            (
+                "She moved to the U.K. It rained.",
+                "She moved to the U.K. It ",
+                ["She moved to the U.K."],
+                "It ",
+            ),
+            (
+                "The office is in D.C. It closed.",
+                "The office is in D.C. It ",
+                ["The office is in D.C."],
+                "It ",
+            ),
+        ]
+
+        for text, prefix, expected_yielded, expected_buffer in cases:
+            with self.subTest(text=text):
+                splitter = SentenceSplitter(
+                    tokenizer="rule-based",
+                    language="en",
+                    minimum_sentence_length=1,
+                    context_size=1,
+                    context_size_look_overhead=128,
+                    auto_context=True,
+                )
+
+                yielded = []
+                for char in prefix:
+                    splitter.add(char)
+                    yielded.extend(splitter.stream())
+
+                self.assertEqual(yielded, expected_yielded)
+                self.assertEqual(splitter.buffer, expected_buffer)
+
+    def test_auto_context_holds_time_abbreviation_continuations(self):
+        cases = [
+            (
+                "The call starts at 9:00 a.m. ET tomorrow.",
+                "The call starts at 9:00 a.m. ET ",
+            ),
+            (
+                "The call starts at 9:00 a.m. Eastern time tomorrow.",
+                "The call starts at 9:00 a.m. Eastern ",
+            ),
+            (
+                "The call starts at 9:00 a.m. UTC+2 tomorrow.",
+                "The call starts at 9:00 a.m. UTC+2 ",
+            ),
+            (
+                "Meet at 7 p.m. Mumbai time.",
+                "Meet at 7 p.m. Mumbai t",
+            ),
+            (
+                "Meet at 7 p.m. Buenos Aires time.",
+                "Meet at 7 p.m. Buenos Aires ",
+            ),
+            (
+                "At 7 p.m. I have dinner with my family.",
+                "At 7 p.m. I ",
+            ),
+            (
+                "At 7 p.m. Tom has dinner with his family.",
+                "At 7 p.m. Tom ",
+            ),
+        ]
+
+        for text, prefix in cases:
+            with self.subTest(text=text):
+                splitter = SentenceSplitter(
+                    tokenizer="rule-based",
+                    language="en",
+                    minimum_sentence_length=1,
+                    context_size=1,
+                    context_size_look_overhead=128,
+                    auto_context=True,
+                )
+
+                yielded = []
+                for char in prefix:
+                    splitter.add(char)
+                    yielded.extend(splitter.stream())
+
+                self.assertEqual(yielded, [])
+                self.assertEqual(
+                    list(generate_sentences(
+                        list(text),
+                        tokenizer="rule-based",
+                        language="en",
+                        minimum_sentence_length=1,
+                        context_size=1,
+                        context_size_look_overhead=128,
+                        auto_context=True,
+                    )),
+                    [text],
+                )
+
+    def test_auto_context_splits_time_abbreviation_before_sentence_starter(self):
+        text = "The meeting ended at 7 p.m. The room emptied."
+        splitter = SentenceSplitter(
+            tokenizer="rule-based",
+            language="en",
+            minimum_sentence_length=1,
+            context_size=1,
+            context_size_look_overhead=128,
+            auto_context=True,
+        )
+
+        yielded = []
+        for char in "The meeting ended at 7 p.m. The ":
+            splitter.add(char)
+            yielded.extend(splitter.stream())
+
+        self.assertEqual(yielded, ["The meeting ended at 7 p.m."])
+        self.assertEqual(splitter.buffer, "The ")
+        self.assertEqual(
+            list(generate_sentences(
+                list(text),
+                tokenizer="rule-based",
+                language="en",
+                minimum_sentence_length=1,
+                context_size=1,
+                context_size_look_overhead=128,
+                auto_context=True,
+            )),
+            ["The meeting ended at 7 p.m.", "The room emptied."],
+        )
+
+    def test_auto_context_holds_reference_label_continuations(self):
+        cases = [
+            (
+                "See Fig. S1 in the supplement today.",
+                "See Fig. S1 ",
+            ),
+            (
+                "See Art. IV in the Constitution today.",
+                "See Art. IV ",
+            ),
+            (
+                "The sample is No. IV in the catalog today.",
+                "The sample is No. IV ",
+            ),
+        ]
+
+        for text, prefix in cases:
+            with self.subTest(text=text):
+                splitter = SentenceSplitter(
+                    tokenizer="rule-based",
+                    language="en",
+                    minimum_sentence_length=1,
+                    context_size=1,
+                    context_size_look_overhead=128,
+                    auto_context=True,
+                )
+
+                yielded = []
+                for char in prefix:
+                    splitter.add(char)
+                    yielded.extend(splitter.stream())
+
+                self.assertEqual(yielded, [])
+                self.assertEqual(
+                    list(generate_sentences(
+                        list(text),
+                        tokenizer="rule-based",
+                        language="en",
+                        minimum_sentence_length=1,
+                        context_size=1,
+                        context_size_look_overhead=128,
+                        auto_context=True,
+                    )),
+                    [text],
+                )
+
+    def test_auto_context_holds_punctuated_name_continuations(self):
+        cases = [
+            (
+                "E! News aired the segment today.",
+                "E! News ",
+            ),
+            (
+                "Yahoo! Sports published the story today.",
+                "Yahoo! Sports ",
+            ),
+            (
+                "OK! Magazine published the interview today.",
+                "OK! Magazine ",
+            ),
+            (
+                "Guess? Inc. reported earnings today.",
+                "Guess? Inc. ",
+            ),
+        ]
+
+        for text, prefix in cases:
+            with self.subTest(text=text):
+                splitter = SentenceSplitter(
+                    tokenizer="rule-based",
+                    language="en",
+                    minimum_sentence_length=1,
+                    context_size=1,
+                    context_size_look_overhead=128,
+                    auto_context=True,
+                )
+
+                yielded = []
+                for char in prefix:
+                    splitter.add(char)
+                    yielded.extend(splitter.stream())
+
+                self.assertEqual(yielded, [])
+                self.assertEqual(
+                    list(generate_sentences(
+                        list(text),
+                        tokenizer="rule-based",
+                        language="en",
+                        minimum_sentence_length=1,
+                        context_size=1,
+                        context_size_look_overhead=128,
+                        auto_context=True,
+                    )),
+                    [text],
+                )
+
+    def test_auto_context_holds_retained_local_false_positive_cases(self):
+        cases_by_family = {
+            "title and rank abbreviations": """
+                Hon. Smith spoke.
+                Supt. Chalmers arrived.
+                Pfc. Davis reported.
+                Spec. Brown testified.
+                Sfc. Miller briefed them.
+                Fr. Brown entered.
+                Br. Andrew replied.
+                Mx. Taylor signed.
+                Mgr. Lefebvre presided.
+                Comm. Smith objected.
+                Adj. Grant arrived.
+                Pfc. Johnson saluted.
+                Spec. Lee answered.
+                Sfc. Garcia arrived.
+                Hon. Justice Clark dissented.
+            """,
+            "lowercase styled initials": """
+                e. e. cummings wrote.
+                k. d. lang sang.
+                p. j. harvey performed.
+                m. ward played.
+            """,
+            "u.s. initialism continuations": """
+                U.S. Bank closed.
+                U.S. Steel reopened.
+                U.S. Cellular expanded.
+                U.S. News aired.
+                U.S. Airways returned.
+                U.S. Bancorp rose.
+                U.S. Chamber replied.
+                U.S. Figure Skating qualified.
+                U.S. Ski trained.
+                U.S. Rowing qualified.
+                U.S. Cycling qualified.
+                U.S. Track qualified.
+                U.S. Anti-Doping Agency appealed.
+                U.S. Holocaust Memorial Museum opened.
+                U.S. Strategic Command responded.
+                U.S. Central Command responded.
+                U.S. Cyber Command responded.
+                U.S. International Trade Commission ruled.
+                U.S. Consumer Product Safety Commission warned.
+                The U.S. West Coast is rainy.
+                The U.S. Small Business Administration replied.
+                The U.S. Library of Congress replied.
+            """,
+            "u.n. initialism continuations": """
+                U.N. Women replied.
+                U.N. Habitat reported.
+                U.N. Global Compact replied.
+                U.N. Water reported.
+                U.N. Volunteers expanded.
+                U.N. University enrolled students.
+                U.N. Treaty Series changed.
+                U.N. Convention changed.
+                U.N. Protocol entered force.
+                U.N. Office on Drugs and Crime responded.
+                U.N. Migration Network met.
+                U.N. Global Pulse responded.
+                The U.N. International Center reopened.
+                The U.N. International Court ruled.
+                The U.N. Conference resumed.
+                The U.N. Commission reported.
+                The U.N. Peacebuilding Commission met.
+                The U.N. Disarmament Commission met.
+                The U.N. Statistical Commission met.
+                The U.N. Permanent Forum opened.
+                The U.N. Forum on Forests met.
+                The U.N. Appeals Tribunal ruled.
+                The U.N. Administrative Tribunal ruled.
+                The U.N. Trusteeship Council adjourned.
+            """,
+            "u.k. initialism continuations": """
+                U.K. Finance reported.
+                U.K. Biobank expanded.
+                U.K. Statistics Authority responded.
+                U.K. Research and Innovation met.
+                U.K. Competition and Markets Authority ruled.
+                U.K. Health Security Agency warned.
+                U.K. Space Agency replied.
+                U.K. Export Finance replied.
+                U.K. Intellectual Property Office replied.
+                The U.K. Civil Service responded.
+                The U.K. Border Force responded.
+                The U.K. Crown Court ruled.
+                The U.K. Ministry of Defence replied.
+                The U.K. Office for National Statistics replied.
+                The U.K. Financial Conduct Authority fined it.
+                The U.K. Atomic Energy Authority replied.
+                The U.K. Infrastructure Bank invested.
+            """,
+            "e.u. initialism continuations": """
+                E.U. Taxonomy applies.
+                E.U. Chips Act passed.
+                E.U. Emissions Trading System expanded.
+                E.U. Merger Regulation applies.
+                E.U. Delegation reopened.
+                E.U. Ombudsman reported.
+                E.U. Agency reviewed it.
+                E.U. Data Act entered force.
+                E.U. Cyber Resilience Act passed.
+                E.U. Battery Regulation applies.
+                The E.U. Space Programme expanded.
+                The E.U. Drug Agency warned.
+                The E.U. Aviation Safety Agency replied.
+                The E.U. Banking Authority warned.
+                The E.U. Securities Authority warned.
+                The E.U. Insurance Authority warned.
+                The E.U. Border Agency replied.
+                The E.U. Foreign Affairs Council met.
+                The E.U. Fundamental Rights Agency replied.
+            """,
+            "d.c. initialism continuations": """
+                D.C. Bar replied.
+                D.C. Police reported.
+                D.C. Superior Court ruled.
+                D.C. Metro met.
+                D.C. Housing Authority replied.
+                D.C. Water warned.
+                D.C. Health Department warned.
+                The D.C. Fire Department responded.
+                The D.C. Court of Appeals ruled.
+                The D.C. Library reopened.
+                The D.C. Lottery reported.
+                The D.C. Jail closed.
+            """,
+            "time abbreviation continuations": """
+                Meet at 7 p.m. Berlin time.
+                Meet at 7 p.m. New York time.
+                Meet at 7 p.m. London time.
+                Meet at 7 p.m. Tokyo time.
+                Meet at 7 p.m. Singapore time.
+                Meet at 7 p.m. Sydney time.
+                Meet at 7 p.m. Los Angeles time.
+                Meet at 7 p.m. Jan. 3.
+                Meet at 7 p.m. Feb. 4.
+                Meet at 7 p.m. Mar. 5.
+                Meet at 7 p.m. Apr. 6.
+                Meet at 7 p.m. Sept. 7.
+                Meet at 7 p.m. Oct. 8.
+                Meet at 7 p.m. Nov. 9.
+                Meet at 7 p.m. Dec. 10.
+            """,
+            "formal reference labels": """
+                See Tbl. S1.
+                See Tbls. S1.
+                See Tab. S1.
+                See Tabs. S1.
+                See App. A.
+                See Apps. A.
+                See Supp. A.
+                See Suppl. S1.
+                See Exh. A.
+                See Exhs. A.
+                See Sch. A.
+                See Sched. A.
+                See Pt. IV.
+                See Pts. IV.
+                See Para. A.
+                See Paras. A.
+                See Subsec. A.
+                See Subsecs. A.
+                See Reg. A-7.
+                See Regs. A-7.
+                See Stat. A.
+                See Stats. A.
+                See Alg. S1.
+                See Thm. IV.
+                See Prop. A.
+                See Cor. A.
+                See Lem. A.
+                See Defn. A.
+                See Obs. A.
+                See Rem. A.
+                See Hyp. A.
+                See Prob. A.
+                See p. S5.
+                See Ex. A.
+            """,
+            "initials before surname particles": """
+                L. van Beethoven arrived.
+                J. de Vries arrived.
+                C. du Pont arrived.
+                A. von Humboldt arrived.
+                M. de la Cruz arrived.
+                V. de Souza arrived.
+                J. da Silva arrived.
+                G. di Lorenzo arrived.
+                N. al-Khatib arrived.
+                R. del Toro arrived.
+                S. dos Santos arrived.
+                T. de Jong arrived.
+                H. van Dyke arrived.
+            """,
+            "punctuated brands and titles": """
+                Yahoo! Japan posted.
+                Yahoo! Answers archived it.
+                Yahoo! Auctions listed it.
+                Yahoo! Weather updated it.
+                Yahoo! Fantasy opened.
+                E! Online published it.
+                E! True Hollywood Story aired.
+                E! Red Carpet aired.
+                OK! UK published it.
+                OK! Australia published it.
+                Jeopardy! Tournament of Champions aired.
+                Jeopardy! National College Championship aired.
+                Jeopardy! The Greatest of All Time aired.
+                Guess? Jeans opened.
+                Guess? Originals launched.
+                Yahoo! Inc. reported.
+                Yahoo! Life published it.
+                Yahoo! Entertainment posted it.
+                Yahoo! Tech reviewed it.
+                Yahoo! Movies listed it.
+                Yahoo! Search indexed it.
+                Yahoo! Messenger closed.
+                Yahoo! Groups archived it.
+                Yahoo! Directory listed it.
+                E! Insider aired it.
+                E! Live aired it.
+                Jeopardy! Invitational Tournament aired.
+                Jeopardy! College Championship aired.
+                Jeopardy! Teen Tournament aired.
+                Jeopardy! Kids Week aired.
+                Guess? Kids opened.
+                Guess? Factory opened.
+                Guess? Watches launched.
+            """,
+            "scientific and taxonomic abbreviations": """
+                The sample was E. coli var. K-12.
+                The isolate was Bacillus sp. ATCC 6051.
+                The report lists Quercus spp. Q1.
+                The key lists Rosa sect. Caninae.
+                The catalog lists Drosophila subg. Sophophora.
+                The note marks Candida ser. A.
+                The isolate was E. coli str. K-12.
+            """,
+            "company suffix continuations": """
+                Acme LLC. CEO resigned.
+                Acme LLP. Partner testified.
+                Acme PLC. Board approved it.
+                Acme Pty. Ltd. CEO resigned.
+                Acme GmbH. Director resigned.
+            """,
+            "weekday date continuations": """
+                Meet Sun. Jan. 3.
+                Meet Wed. Jan. 6.
+            """,
+            "legal reporter citations": """
+                Cite 123 F. Supp. 2d 456.
+                Cite 123 F. Supp. 3d 456.
+                Cite 123 Fed. Appx. 456.
+                Cite 123 Cal. App. 5th 456.
+                Cite 123 N.Y. App. Div. 456.
+                Cite 123 Cal. Rptr. 3d 456.
+                Cite 123 Mass. App. Ct. 456.
+                Cite 123 Ill. App. 3d 456.
+                Cite 123 So. 2d 456.
+                Cite 123 A. 2d 456.
+                Cite 123 U.S. Dist. LEXIS 456.
+                Cite 123 N.Y. Misc. 456.
+            """,
+            "legal rule and statute citation chains": """
+                See Fed. R. Civ. P. 56 today.
+                See Fed. R. Evid. 403 today.
+                See U.S. Const. amend. XIV today.
+                See Pub. L. No. 117-2 today.
+                See Cal. Code Civ. Proc. \u00a7 425.16 today.
+                See Tex. R. Civ. P. 91a today.
+                See Va. Code \u00a7 8.01-243 today.
+                See W. Va. Code \u00a7 55-2-12 today.
+                See 88 Fed. Reg. 12345 today.
+                See 17 C.F.R. pt. 240 today.
+                See Rest. 2d Torts \u00a7 402A today.
+                See Model Bus. Corp. Act \u00a7 8.30 today.
+            """,
+            "state legal and government continuations": """
+                The Mass. Appeals Court ruled today.
+                The Calif. Supreme Court ruled today.
+                The Va. State Corporation Commission responded.
+                The Miss. Supreme Court ruled today.
+                The W. Va. Supreme Court ruled today.
+            """,
+            "title and office abbreviation chains": """
+                Asst. Prof. Smith spoke.
+                Asst. U.S. Atty. Rivera filed it.
+                Acting Asst. Sec. Taylor testified.
+                Dist. Atty. Reyes filed it.
+                Admin. Asst. Rivera answered.
+            """,
+            "place prefix continuations": """
+                Pt. Reyes is foggy today.
+                Pt. Lookout reopened today.
+                Ft. Lauderdale is sunny today.
+                Ft. Collins voted today.
+                Sts. Peter and Paul opened today.
+            """,
+            "new exact initialism continuations": """
+                U.S.A. Swimming announced the roster.
+                U.S.A. Gymnastics replied today.
+                U.N. Environmental Programme warned today.
+                U.N. Educational Organization responded.
+                E.U. Green Deal passed today.
+                E.U. Carbon Border Adjustment Mechanism applied today.
+            """,
+            "report labels and measured values": """
+                The est. 5 cases remain open.
+                The est. $5 million cost was approved.
+                The temp. 37 C reading was recorded.
+                See Eqn. S1 today.
+                See Appxs. A-C today.
+                See Assumps. A-B today.
+                See Aux. Fig. S1 today.
+            """,
+            "company suffix chains": """
+                Acme Pte. Ltd. filed today.
+                Acme Sdn. Bhd. filed today.
+            """,
+        }
+
+        for family, block in cases_by_family.items():
+            cases = [line.strip() for line in block.splitlines() if line.strip()]
+            for text in cases:
+                with self.subTest(family=family, text=text):
+                    self.assertAutoContextSentences(text, [text])
+
+    def test_auto_context_generalized_edge_case_families_for_rule_tokenizers(self):
+        cases_by_family = {
+            "legal citation chains": [
+                "See Fed. R. Civ. P. 56 today.",
+                "See U.S. Const. amend. XIV today.",
+                "See Va. Code \u00a7 8.01-243 today.",
+                "See Model Bus. Corp. Act \u00a7 8.30 today.",
+            ],
+            "state and place continuations": [
+                "The Miss. Supreme Court ruled today.",
+                "The W. Va. Supreme Court ruled today.",
+                "Ft. Lauderdale is sunny today.",
+                "Sts. Peter and Paul opened today.",
+            ],
+            "title and company chains": [
+                "Asst. U.S. Atty. Rivera filed it.",
+                "Admin. Asst. Rivera answered.",
+                "Acme Pte. Ltd. filed today.",
+                "Acme Inc. CEO resigned.",
+            ],
+            "formal labels and initialisms": [
+                "The est. $5 million cost was approved.",
+                "See Appxs. A-C today.",
+                "U.N. Environmental Programme warned today.",
+                "E.U. Carbon Border Adjustment Mechanism applied today.",
+            ],
+        }
+
+        for family, cases in cases_by_family.items():
+            for text in cases:
+                with self.subTest(family=family, text=text):
+                    self.assertAutoContextSentencesForBoundaryTokenizers(text, [text])
+
+    def test_auto_context_generalized_heuristics_keep_counterexamples_splittable(self):
+        cases = [
+            (
+                "The title was Asst. It changed.",
+                ["The title was Asst.", "It changed."],
+            ),
+            (
+                "The estimate says est. It changed.",
+                ["The estimate says est.", "It changed."],
+            ),
+            (
+                "The place marker says Pt. It changed.",
+                ["The place marker says Pt.", "It changed."],
+            ),
+            (
+                "The abbreviation was Va. It changed.",
+                ["The abbreviation was Va.", "It changed."],
+            ),
+            (
+                "The merged company was Acme Widgets Inc. Nobody objected.",
+                ["The merged company was Acme Widgets Inc.", "Nobody objected."],
+            ),
+            (
+                "The answer was plan B. I changed it.",
+                ["The answer was plan B.", "I changed it."],
+            ),
+            (
+                "The company asked for my C.V. I sent it.",
+                ["The company asked for my C.V.", "I sent it."],
+            ),
+            (
+                "I met A. Karpov today.",
+                ["I met A. Karpov today."],
+            ),
+        ]
+
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertAutoContextSentencesForBoundaryTokenizers(text, expected)
+
+    def test_auto_context_holds_partial_legal_roman_numeral_prefix(self):
+        for tokenizer in ("rule-based", AUTO_CONTEXT_WORKFLOW_TOKENIZER):
+            with self.subTest(tokenizer=tokenizer):
+                splitter = SentenceSplitter(
+                    tokenizer=tokenizer,
+                    language="en",
+                    minimum_sentence_length=1,
+                    minimum_first_fragment_length=1,
+                    context_size=1,
+                    context_size_look_overhead=128,
+                    auto_context=True,
+                )
+
+                yielded = []
+                for char in "See U.S. Const. amend. X":
+                    splitter.add(char)
+                    yielded.extend(splitter.stream())
+
+                self.assertEqual(yielded, [])
+
+    def test_auto_context_splits_contextual_abbreviations_before_sentence_starters(self):
+        cases = [
+            (
+                "The category is Misc. Delete it.",
+                ["The category is Misc.", "Delete it."],
+            ),
+            (
+                "The district label is Dist. It changed.",
+                ["The district label is Dist.", "It changed."],
+            ),
+            (
+                "Cite 123 U.S. It changed.",
+                ["Cite 123 U.S.", "It changed."],
+            ),
+            (
+                "The note marks Candida ser. This changed.",
+                ["The note marks Candida ser.", "This changed."],
+            ),
+        ]
+
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertAutoContextSentences(text, expected)
+
+    def test_auto_context_does_not_yield_after_bare_integer_period(self):
+        splitter = SentenceSplitter(
+            tokenize_sentences=lambda text: [
+                "The chess annotation `1. d4 Nf6 2. c4 e6 3.",
+                "N",
+            ],
+            tokenizer="nltk+rule-based",
+            language="en",
+            minimum_sentence_length=1,
+            context_size=12,
+            context_size_look_overhead=64,
+            auto_context=True,
+            never_split_numbers=True,
+        )
+
+        yielded = []
+        for char in "The chess annotation `1. d4 Nf6 2. c4 e6 3. N":
+            splitter.add(char)
+            yielded.extend(splitter.stream())
+
+        self.assertEqual(yielded, [])
+
+    def test_auto_context_uses_default_numeric_period_policy(self):
+        splitter = SentenceSplitter(
+            tokenize_sentences=lambda text: [
+                "The chess annotation `1. d4 Nf6 2. c4 e6 3.",
+                "N",
+            ],
+            tokenizer="nltk+rule-based",
+            language="en",
+            minimum_sentence_length=1,
+            context_size=12,
+            context_size_look_overhead=64,
+            auto_context=True,
+        )
+
+        yielded = []
+        for char in "The chess annotation `1. d4 Nf6 2. c4 e6 3. N":
+            splitter.add(char)
+            yielded.extend(splitter.stream())
+
+        self.assertEqual(
+            yielded,
+            ["The chess annotation `1. d4 Nf6 2. c4 e6 3."],
+        )
+
     def test_punctuated_name_continuations_are_exact(self):
         cases = [
             (
@@ -779,7 +1828,7 @@ class TestSentenceGenerator(unittest.TestCase):
                 self.assertEqual(
                     list(generate_sentences(
                         list(text),
-                        tokenizer="nltk+rule-based",
+                        tokenizer=AUTO_CONTEXT_WORKFLOW_TOKENIZER,
                         language="en",
                         minimum_sentence_length=1,
                         context_size=12,
@@ -857,6 +1906,96 @@ class TestSentenceGenerator(unittest.TestCase):
             (
                 "The meeting is at 3 p.m. tomorrow.",
                 ["The meeting is at 3 p.m. tomorrow."],
+            ),
+            (
+                "The spacecraft lifted off at 3:22 p.m. EDT on May 30.",
+                ["The spacecraft lifted off at 3:22 p.m. EDT on May 30."],
+            ),
+            (
+                "The U.S. Bureau responded today.",
+                ["The U.S. Bureau responded today."],
+            ),
+            (
+                "The U.S. Constitution matters today.",
+                ["The U.S. Constitution matters today."],
+            ),
+            (
+                "The U.S. Environmental Protection Agency responded today.",
+                ["The U.S. Environmental Protection Agency responded today."],
+            ),
+            (
+                "The U.S. Endangered Species Act applies today.",
+                ["The U.S. Endangered Species Act applies today."],
+            ),
+            (
+                "The U.S. Food and Drug Administration issued guidance today.",
+                ["The U.S. Food and Drug Administration issued guidance today."],
+            ),
+            (
+                "The U.S. East Coast braced for rain today.",
+                ["The U.S. East Coast braced for rain today."],
+            ),
+            (
+                "The U.S. Marines arrived today.",
+                ["The U.S. Marines arrived today."],
+            ),
+            (
+                "The U.S. Memory Championships started today.",
+                ["The U.S. Memory Championships started today."],
+            ),
+            (
+                "The U.S. Minerals Management Service responded today.",
+                ["The U.S. Minerals Management Service responded today."],
+            ),
+            (
+                "The U.S. Securities and Exchange Commission responded today.",
+                ["The U.S. Securities and Exchange Commission responded today."],
+            ),
+            (
+                "The U.S. Vice President spoke today.",
+                ["The U.S. Vice President spoke today."],
+            ),
+            (
+                "U.N. Secretary-General Antonio Guterres spoke today.",
+                ["U.N. Secretary-General Antonio Guterres spoke today."],
+            ),
+            (
+                "The U.N. Children\u2019s Fund responded today.",
+                ["The U.N. Children\u2019s Fund responded today."],
+            ),
+            (
+                "The U.N. High Commissioner for Human Rights spoke today.",
+                ["The U.N. High Commissioner for Human Rights spoke today."],
+            ),
+            (
+                "The U.N. Atlas of the Oceans lists coastal cities today.",
+                ["The U.N. Atlas of the Oceans lists coastal cities today."],
+            ),
+            (
+                "A. Karpov vs. B. Spassky, Candidates Tournament semifinal, Leningrad, 1974.",
+                [
+                    "A. Karpov vs. B. Spassky, Candidates Tournament semifinal, Leningrad, 1974.",
+                ],
+            ),
+            (
+                "A. Karpov won the match today.",
+                ["A. Karpov won the match today."],
+            ),
+            (
+                "The answer is A. Then it changed.",
+                ["The answer is A.", "Then it changed."],
+            ),
+            (
+                "John is as old as I. Tom disagreed.",
+                ["John is as old as I.", "Tom disagreed."],
+            ),
+            (
+                "He likes traveling and so do I. Long trips are fun.",
+                ["He likes traveling and so do I.", "Long trips are fun."],
+            ),
+            (
+                "The meeting is at 3 p.m. Monday.",
+                ["The meeting is at 3 p.m. Monday."],
             ),
             (
                 "Who first reached the summit of Mt. Everest? Ivy needs water.",

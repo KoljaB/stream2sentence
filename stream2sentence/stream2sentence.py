@@ -176,6 +176,7 @@ def _tokenize_sentences(
     tokenize_sentences=None,
     tokenizer: Optional[str] = None,
     language: Optional[str] = None,
+    never_split_numbers: bool = False,
 ) -> list[str]:
     """
     Tokenizes sentences from the input text.
@@ -200,9 +201,17 @@ def _tokenize_sentences(
 
             sentences = nltk.tokenize.sent_tokenize(text)
         elif tokenizer == "rule-based":
-            sentences = _rule_based_tokenize_sentences(text, language)
+            sentences = _rule_based_tokenize_sentences(
+                text,
+                language,
+                never_split_numbers=never_split_numbers,
+            )
         elif tokenizer == "nltk+rule-based":
-            sentences = _nltk_rule_based_tokenize_sentences(text, language)
+            sentences = _nltk_rule_based_tokenize_sentences(
+                text,
+                language,
+                never_split_numbers=never_split_numbers,
+            )
         elif tokenizer == "stanza":
             import stanza
 
@@ -216,8 +225,12 @@ def _tokenize_sentences(
     return sentences
 
 
-def _rule_based_tokenize_sentences(text: str, language: str = "en") -> list[str]:
-    detector = get_boundary_detector(language)
+def _rule_based_tokenize_sentences(
+    text: str,
+    language: str = "en",
+    never_split_numbers: bool = False,
+) -> list[str]:
+    detector = get_boundary_detector(language, never_split_numbers)
     sentence_terminators = set(".?!。！？؟।")
     closing_marks = "\"')]}”’»›"
     sentences = []
@@ -300,14 +313,27 @@ def _sentences_from_boundary_offsets(text: str, offsets: list[int]) -> list[str]
     return sentences
 
 
-def _nltk_rule_based_tokenize_sentences(text: str, language: str = "en") -> list[str]:
+def _nltk_rule_based_tokenize_sentences(
+    text: str,
+    language: str = "en",
+    never_split_numbers: bool = False,
+) -> list[str]:
     import nltk
 
     nltk_sentences = nltk.tokenize.sent_tokenize(text)
-    rule_based_sentences = _rule_based_tokenize_sentences(text, language)
+    rule_based_sentences = _rule_based_tokenize_sentences(
+        text,
+        language,
+        never_split_numbers=never_split_numbers,
+    )
     nltk_offsets = set(_sentence_boundary_offsets(text, nltk_sentences))
     rule_based_offsets = set(_sentence_boundary_offsets(text, rule_based_sentences))
-    consensus_offsets = sorted(nltk_offsets & rule_based_offsets)
+    detector = get_boundary_detector(language, never_split_numbers)
+    override_offsets = {
+        offset for offset in rule_based_offsets - nltk_offsets
+        if detector.is_high_confidence_sentence_boundary(text, offset - 1)
+    }
+    consensus_offsets = sorted((nltk_offsets & rule_based_offsets) | override_offsets)
 
     return _sentences_from_boundary_offsets(text, consensus_offsets)
 
@@ -343,7 +369,6 @@ async def generate_sentences_async(
     quick_yield_single_sentence_fragment: bool = False,
     quick_yield_for_all_sentences: bool = False,
     quick_yield_every_fragment: bool = False,
-    auto_context: bool = False,
     cleanup_text_links: bool = False,
     cleanup_text_emojis: bool = False,
     tokenize_sentences=None,
@@ -355,6 +380,8 @@ async def generate_sentences_async(
     force_first_fragment_after_words=30,
     filter_first_non_alnum_characters: bool = False,
     debug=False,
+    auto_context: bool = False,
+    never_split_numbers: bool = False,
 ) -> AsyncIterator[str]:
     """
     Generates well-formed sentences from a stream of characters or text chunks
@@ -389,9 +416,6 @@ async def generate_sentences_async(
         quick_yield_every_fragment (bool): If set to True, the
           generator not only yield every sentence first fragment, but also every
           following fragment.
-        auto_context (bool): If True, safe sentence boundaries may be yielded
-          before the full context_size delay when the boundary detector and
-          tokenizer agree. Default is False.
         cleanup_text_links (bool): If True, removes hyperlinks from the text
           stream to ensure clean output.
         cleanup_text_emojis (bool): If True, filters out emojis from the text
@@ -416,6 +440,12 @@ async def generate_sentences_async(
         filter_first_non_alnum_characters (bool): If True, filters out the
           first non-alphanumeric characters from the text stream.
         debug (bool): If True, enables debug mode for logging.
+        auto_context (bool): If True, safe sentence boundaries may be yielded
+          before the full context_size delay when the boundary detector and
+          tokenizer agree. Default is False.
+        never_split_numbers (bool): If True, bare integer tokens ending in a
+          period, such as "1.", are treated as non-sentence boundaries.
+          Default is False.
 
     Yields:
         Iterator[str]: An iterator of complete sentences constructed from the
@@ -438,6 +468,7 @@ async def generate_sentences_async(
         quick_yield_for_all_sentences=quick_yield_for_all_sentences,
         quick_yield_every_fragment=quick_yield_every_fragment,
         auto_context=auto_context,
+        never_split_numbers=never_split_numbers,
         cleanup_text_links=cleanup_text_links,
         cleanup_text_emojis=cleanup_text_emojis,
         tokenize_sentences=tokenize_sentences,
@@ -515,7 +546,6 @@ class SentenceSplitter:
         quick_yield_single_sentence_fragment: bool = False,
         quick_yield_for_all_sentences: bool = False,
         quick_yield_every_fragment: bool = False,
-        auto_context: bool = False,
         cleanup_text_links: bool = False,
         cleanup_text_emojis: bool = False,
         tokenize_sentences=None,
@@ -527,6 +557,8 @@ class SentenceSplitter:
         force_first_fragment_after_words=30,
         filter_first_non_alnum_characters: bool = False,
         debug=False,
+        auto_context: bool = False,
+        never_split_numbers: bool = False,
     ):
         """
         Generates well-formed sentences from a stream of characters or text chunks
@@ -559,9 +591,6 @@ class SentenceSplitter:
             quick_yield_every_fragment (bool): If set to True, the
             generator not only yield every sentence first fragment, but also every
             following fragment.
-            auto_context (bool): If True, safe sentence boundaries may be
-            yielded before the full context_size delay when the boundary detector
-            and tokenizer agree. Default is False.
             cleanup_text_links (bool): If True, removes hyperlinks from the text
             stream to ensure clean output.
             cleanup_text_emojis (bool): If True, filters out emojis from the text
@@ -586,6 +615,12 @@ class SentenceSplitter:
             filter_first_non_alnum_characters (bool): If True, filters out the
             first non-alphanumeric characters from the text stream.
             debug (bool): If True, enables debug mode for logging.
+            auto_context (bool): If True, safe sentence boundaries may be
+            yielded before the full context_size delay when the boundary detector
+            and tokenizer agree. Default is False.
+            never_split_numbers (bool): If True, bare integer tokens ending in a
+            period, such as "1.", are treated as non-sentence boundaries.
+            Default is False.
 
         Yields:
             Iterator[str]: An iterator of complete sentences constructed from the
@@ -626,12 +661,16 @@ class SentenceSplitter:
         self.quick_yield_for_all_sentences = quick_yield_for_all_sentences
         self.quick_yield_every_fragment = quick_yield_every_fragment
         self.auto_context = auto_context
+        self.never_split_numbers = never_split_numbers
         self.cleanup_text_links = cleanup_text_links
         self.cleanup_text_emojis = cleanup_text_emojis
         self.tokenize_sentences = tokenize_sentences
         self.tokenizer = current_tokenizer
         self.language = language
-        self.quick_yield_boundary_detector = get_boundary_detector(language)
+        self.quick_yield_boundary_detector = get_boundary_detector(
+            language,
+            never_split_numbers,
+        )
         self.log_characters = log_characters
         self.sentence_fragment_delimiters = sentence_fragment_delimiters
         self.full_sentence_delimiters = full_sentence_delimiters
@@ -644,6 +683,12 @@ class SentenceSplitter:
 
     def _quick_yield_boundary_end(self, boundary_position):
         boundary_end = boundary_position
+        if self._is_quick_yield_terminal(boundary_position):
+            while (
+                boundary_end + 1 < len(self.buffer)
+                and self.buffer[boundary_end + 1] in _QUICK_YIELD_TERMINATORS
+            ):
+                boundary_end += 1
         while (
             boundary_end + 1 < len(self.buffer)
             and self.buffer[boundary_end + 1] in _QUICK_YIELD_CLOSING_MARKS
@@ -830,6 +875,7 @@ class SentenceSplitter:
                         self.tokenize_sentences,
                         self.tokenizer,
                         self.language,
+                        self.never_split_numbers,
                     )
 
                     if self.debug:
@@ -925,6 +971,7 @@ class SentenceSplitter:
                 self.tokenize_sentences,
                 self.tokenizer,
                 self.language,
+                self.never_split_numbers,
             )
             sentence_buffer = ""
 

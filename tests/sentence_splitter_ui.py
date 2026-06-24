@@ -158,6 +158,33 @@ HTML = r"""<!doctype html>
       outline: none;
     }
 
+    .check-field {
+      height: 38px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--ink);
+      background: var(--panel-raised);
+      font-size: 12px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .check-field input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: var(--green);
+    }
+
+    .check-field:focus-within {
+      border-color: rgba(100, 212, 139, 0.65);
+      box-shadow: 0 0 0 4px var(--focus);
+    }
+
     select:focus,
     textarea:focus {
       border-color: rgba(100, 212, 139, 0.65);
@@ -429,6 +456,14 @@ HTML = r"""<!doctype html>
             <option value="200">200 ms</option>
           </select>
         </div>
+        <label class="check-field" for="autoContext">
+          <input id="autoContext" type="checkbox">
+          <span>Auto context</span>
+        </label>
+        <label class="check-field" for="neverSplitNumbers">
+          <input id="neverSplitNumbers" type="checkbox">
+          <span>Never split numbers</span>
+        </label>
         <button id="startStop" class="primary" type="button">Start</button>
         <div id="status" class="status">Idle</div>
       </div>
@@ -470,6 +505,8 @@ HTML = r"""<!doctype html>
     const empty = document.querySelector("#empty");
     const startStop = document.querySelector("#startStop");
     const delay = document.querySelector("#delay");
+    const autoContext = document.querySelector("#autoContext");
+    const neverSplitNumbers = document.querySelector("#neverSplitNumbers");
     const statusText = document.querySelector("#status");
     const stats = document.querySelector("#stats");
     const meter = document.querySelector("#meter");
@@ -484,6 +521,8 @@ HTML = r"""<!doctype html>
       startStop.textContent = next ? "Stop" : "Start";
       startStop.classList.toggle("stop", next);
       delay.disabled = next;
+      autoContext.disabled = next;
+      neverSplitNumbers.disabled = next;
     }
 
     function showInputMode() {
@@ -554,7 +593,9 @@ HTML = r"""<!doctype html>
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             text,
-            delay_ms: Number(delay.value)
+            delay_ms: Number(delay.value),
+            auto_context: autoContext.checked,
+            never_split_numbers: neverSplitNumbers.checked
           }),
           signal: controller.signal
         });
@@ -661,6 +702,8 @@ class SentenceSplitterUiHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             text = str(payload.get("text", ""))
             delay_ms = int(payload.get("delay_ms", 50))
+            auto_context = payload.get("auto_context") is True
+            never_split_numbers = payload.get("never_split_numbers") is True
         except Exception:
             self.send_error(400, "Invalid JSON payload")
             return
@@ -679,6 +722,8 @@ class SentenceSplitterUiHandler(BaseHTTPRequestHandler):
                 minimum_sentence_length=1,
                 context_size=12,
                 context_size_look_overhead=64,
+                auto_context=auto_context,
+                never_split_numbers=never_split_numbers,
             )
 
             for index, char in enumerate(text, start=1):
