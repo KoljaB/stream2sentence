@@ -1,4 +1,4 @@
-"""Watch consensus tokenization of the punctuation-heavy fixture in real time."""
+"""Watch sentence splitting of the punctuation-heavy fixture in real time."""
 
 import argparse
 import importlib
@@ -13,8 +13,23 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
+TOKENIZER_CHOICES = ("nltk+rule-based", "consensus", "rule-based", "nltk", "stanza")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--tokenizer",
+        choices=TOKENIZER_CHOICES,
+        default="nltk+rule-based",
+        help="sentence tokenizer to run in the visual splitter",
+    )
+    parser.add_argument(
+        "--auto-context",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="yield safe boundaries before the fixed context window when possible",
+    )
     parser.add_argument(
         "--delay",
         type=float,
@@ -110,11 +125,12 @@ def main() -> int:
     try:
         for sentence in generate_sentences(
             char_stream(CONSENSUS_STRESS_INPUT),
-            tokenizer="nltk+rule-based",
+            tokenizer=args.tokenizer,
             language="en",
             minimum_sentence_length=1,
             context_size=12,
             context_size_look_overhead=64,
+            auto_context=args.auto_context,
         ):
             sentences.append(sentence)
             replay_tail = take_replay_tail(sentence)
