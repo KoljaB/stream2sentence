@@ -32,6 +32,16 @@ https://github.com/user-attachments/assets/0428d806-4b30-47fa-9cfe-8fb42c95b2e4
 pip install stream2sentence
 ```
 
+The base installation uses stream2sentence's built-in rule-based tokenizer and
+does not install NLTK or Stanza. Install either tokenizer only when you need it:
+
+```bash
+pip install "stream2sentence[nltk]"
+pip install "stream2sentence[stanza]"
+pip install "stream2sentence[nltk,stanza]"  # both, using standard pip extras
+pip install "stream2sentence[all]"          # both
+```
+
 ## Usage
 
 Pass a generator of characters or text chunks to `generate_sentences()` to get a generator of sentences in return.
@@ -62,7 +72,7 @@ One main use case of this library is enable fast text to speech synthesis in the
 
 ### Recommended English setup
 
-For English streams, the recommended configuration is `tokenizer="nltk+rule-based"` with `auto_context=True`. This combines NLTK sentence splitting with stream2sentence's local boundary checks and allows safe sentence boundaries to be yielded earlier than the fixed context window when both checks support the split.
+For English streams where the optional NLTK extra is installed, the recommended configuration is `tokenizer="nltk+rule-based"` with `auto_context=True`. This combines NLTK sentence splitting with stream2sentence's local boundary checks and allows safe sentence boundaries to be yielded earlier than the fixed context window when both checks support the split.
 
 ```python
 for sentence in generate_sentences(
@@ -148,11 +158,11 @@ These parameters control how quickly and frequently the generator yields sentenc
   - If None, uses the default tokenizer specified by `tokenizer`.
   - Default: None
 
-- `tokenizer: str = "nltk"`
+- `tokenizer: str = "rule-based"`
   - Specifies the tokenizer to use. Options: "nltk", "stanza", "rule-based", or "nltk+rule-based"
   - "nltk+rule-based" splits at boundaries accepted by both NLTK and the rule-based heuristic tokenizer, plus rule-based boundaries promoted by high-confidence local checks.
   - Recommended for English, especially with `auto_context=True`.
-  - Default: "nltk"
+  - Default: "rule-based"
 
 - `language: str = "en"`
   - Language setting for the tokenizer.

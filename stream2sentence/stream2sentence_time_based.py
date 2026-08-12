@@ -1,16 +1,10 @@
 
-import nltk
-from nltk.tokenize import PunktSentenceTokenizer
-
 import time
 from itertools import accumulate
 
-from stream2sentence import init_tokenizer
 from stream2sentence.avoid_pause_words import AVOID_PAUSE_WORDS
 from stream2sentence.delimiter_ignore_prefixes import DELIMITER_IGNORE_PREFIXES
-
-
-init_tokenizer("nltk")
+from stream2sentence.stream2sentence import _tokenize_sentences
 
 WORDS_PER_TOKEN = 0.75
 preferred_sentence_fragment_delimiters_global = []
@@ -79,6 +73,19 @@ def get_sentences_needed_for_min_length(sentences_on_buffer, min_output_length):
     return find_first_greater(sums_of_word_lens, min_output_length) + 1
 
 
+def get_sentence_end_offset(text, sentences, sentence_count):
+    search_start = 0
+    sentence_end = 0
+    for sentence in sentences[:sentence_count]:
+        sentence = sentence.strip()
+        sentence_start = text.find(sentence, search_start)
+        if sentence_start < 0:
+            return None
+        sentence_end = sentence_start + len(sentence)
+        search_start = sentence_end
+    return sentence_end
+
+
 def generate_sentences_time_based(
     generator, 
     lead_time = 1,
@@ -92,6 +99,8 @@ def generate_sentences_time_based(
     deadline_offsets_static = [1],
     deadline_offsets_dynamic = [0],
     include_metadata = False,
+    tokenizer = "rule-based",
+    language = "en",
 ):
     """
     Uses a time based strategy to determine whether to yield. A target tps is provided,
@@ -142,8 +151,6 @@ def generate_sentences_time_based(
     preferred_sentence_fragment_delimiters_global = set(preferred_sentence_fragment_delimiters)
     sentence_fragment_delimiters_global = set(sentence_fragment_delimiters)
     delimiter_ignore_prefixes_global = set(delimiter_ignore_prefixes)
-    punkt_sentence_tokenizer = PunktSentenceTokenizer()
-
     start_time = time.time()
     last_sentence_time = time.time()
     estimated_time_between_words = 1 / (target_tps * WORDS_PER_TOKEN)
@@ -178,9 +185,11 @@ def generate_sentences_time_based(
 
         llm_buffer = llm_buffer_full.rsplit(" ", 1)[0] #remove last word
 
-        #TODO edge case with disagreement, how to identify and use len(output) as fallback?
-        sentences_on_buffer = nltk.tokenize.sent_tokenize(llm_buffer)
-        sentence_boundaries = list(punkt_sentence_tokenizer.span_tokenize(llm_buffer_full)) #handle white space descrepancies in full_buffer and buffer after split()
+        sentences_on_buffer = _tokenize_sentences(
+            llm_buffer,
+            tokenizer=tokenizer,
+            language=language,
+        )
 
         num_sentences_output = len(output_sentences)
         min_output_length = get_index_or_last(min_output_lengths, num_sentences_output)
@@ -202,7 +211,7 @@ def generate_sentences_time_based(
 
         output_needed = is_output_needed(has_output_started, start_time, lead_time, output_sentences, estimated_time_between_words, deadline_offset)
         if output_needed and use_first_sentence:
-            end_index = len(sentences_on_buffer[0]) if len(sentence_boundaries) == 1 else sentence_boundaries[1][0] #edge case where sentence_boundaries disagrees with nltk.tokenize.sent_tokenize
+            end_index = get_sentence_end_offset(llm_buffer_full, sentences_on_buffer, 1)
             yield handle_output(sentences_on_buffer[0], sentence_boundary_index=end_index, metadata={"sentence_type": "sentence"})
         elif output_needed:
             output = current_fragment
@@ -227,12 +236,20 @@ def generate_sentences_time_based(
             if sentences_needed_for_min_len == 0 or sentences_needed_for_min_len + 2 > len(sentences_on_buffer):
                 #two sentences ahead is ideal
                 continue
-            end_index = sentence_boundaries[sentences_needed_for_min_len][0]
+            end_index = get_sentence_end_offset(
+                llm_buffer_full,
+                sentences_on_buffer,
+                sentences_needed_for_min_len,
+            )
             output = " ".join(sentences_on_buffer[:sentences_needed_for_min_len])
             yield handle_output(output, end_index, metadata={"sentence_type": "sentence"})
 
     #after all tokens are processed yield whatever is left
-    for sentence in nltk.tokenize.sent_tokenize(llm_buffer_full):
+    for sentence in _tokenize_sentences(
+        llm_buffer_full,
+        tokenizer=tokenizer,
+        language=language,
+    ):
         if include_metadata:
             yield (sentence, {"sentence_type": "sentence"})
         else:

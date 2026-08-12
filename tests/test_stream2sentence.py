@@ -78,6 +78,56 @@ def quick_yield_sentences(
 
 class TestSentenceGenerator(unittest.TestCase):
 
+    def test_public_apis_default_to_builtin_tokenizer(self):
+        for callable_ in (generate_sentences, generate_sentences_async, SentenceSplitter):
+            with self.subTest(callable_=callable_):
+                default = inspect.signature(callable_).parameters["tokenizer"].default
+                self.assertEqual(default, "rule-based")
+
+    def test_default_tokenizer_does_not_load_optional_dependencies(self):
+        with mock.patch(
+            "stream2sentence.stream2sentence._load_optional_dependency",
+            side_effect=AssertionError("optional dependency was loaded"),
+        ):
+            self.assertEqual(
+                list(generate_sentences("One sentence. Another sentence.")),
+                ["One sentence.", "Another sentence."],
+            )
+
+    def test_missing_optional_tokenizer_dependency_has_install_guidance(self):
+        stream2sentence_module = importlib.import_module(
+            "stream2sentence.stream2sentence"
+        )
+
+        for tokenizer, initialized_attribute, extra in (
+            ("nltk", "nltk_initialized", "nltk"),
+            ("stanza", "stanza_initialized", "stanza"),
+        ):
+            with self.subTest(tokenizer=tokenizer):
+                old_initialized = getattr(
+                    stream2sentence_module,
+                    initialized_attribute,
+                )
+                setattr(stream2sentence_module, initialized_attribute, False)
+                missing = ModuleNotFoundError(f"No module named '{extra}'")
+                missing.name = extra
+                try:
+                    with mock.patch(
+                        "stream2sentence.stream2sentence.importlib.import_module",
+                        side_effect=missing,
+                    ):
+                        with self.assertRaisesRegex(
+                            ModuleNotFoundError,
+                            rf"stream2sentence\[{extra}\]",
+                        ):
+                            SentenceSplitter(tokenizer=tokenizer)
+                finally:
+                    setattr(
+                        stream2sentence_module,
+                        initialized_attribute,
+                        old_initialized,
+                    )
+
     def test_new_options_are_appended_after_032_positional_parameters(self):
         expected_tail = [
             "cleanup_text_links",

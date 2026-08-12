@@ -5,6 +5,7 @@ from a continuous stream of characters or text chunks
 
 import collections
 import functools
+import importlib
 import logging
 import re
 import time
@@ -24,7 +25,7 @@ import emoji
 
 from stream2sentence.quick_yield_boundary import HOLD, REJECT, SPLIT, get_boundary_detector
 
-current_tokenizer = "nltk"
+current_tokenizer = "rule-based"
 current_language = "en"
 stanza_initialized = False
 nltk_initialized = False
@@ -36,7 +37,7 @@ _QUICK_YIELD_PRE_TERMINAL_CLOSING_MARKS = ")]}"
 
 
 def _normalize_tokenizer(tokenizer: str) -> str:
-    tokenizer = (tokenizer or "nltk").lower().replace("_", "-")
+    tokenizer = (tokenizer or "rule-based").lower().replace("_", "-")
     if tokenizer in {"rule-based", "rules"}:
         return "rule-based"
     if tokenizer in {
@@ -50,6 +51,19 @@ def _normalize_tokenizer(tokenizer: str) -> str:
     return tokenizer
 
 
+def _load_optional_dependency(module_name: str, extra: str, tokenizer: str):
+    try:
+        return importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        if exc.name != module_name:
+            raise
+        raise ModuleNotFoundError(
+            f'The "{tokenizer}" tokenizer requires the optional dependency '
+            f'"{module_name}". Install it with '
+            f'`pip install "stream2sentence[{extra}]"`.'
+        ) from exc
+
+
 def initialize_nltk(language: str = "en", debug=False):
     """
     Initializes NLTK by downloading required data for sentence tokenization.
@@ -60,19 +74,15 @@ def initialize_nltk(language: str = "en", debug=False):
 
     logging.info("Initializing NLTK Tokenizer")
 
-    try:
-        import nltk
+    nltk = _load_optional_dependency("nltk", "nltk", "nltk")
 
-        try:
-            nltk.data.find("tokenizers/punkt_tab")
-        except LookupError:
-            if not nltk.download("punkt_tab", quiet=not debug):
-                raise RuntimeError("Could not download nltk punkt_tab data")
-            nltk.data.find("tokenizers/punkt_tab")
-        nltk_initialized = True
-    except Exception as e:
-        print(f"Error initializing nltk tokenizer: {e}")
-        nltk_initialized = False
+    try:
+        nltk.data.find("tokenizers/punkt_tab")
+    except LookupError:
+        if not nltk.download("punkt_tab", quiet=not debug):
+            raise RuntimeError("Could not download nltk punkt_tab data")
+        nltk.data.find("tokenizers/punkt_tab")
+    nltk_initialized = True
 
 
 def initialize_stanza(language: str = "en", offline=False):
@@ -85,17 +95,13 @@ def initialize_stanza(language: str = "en", offline=False):
 
     logging.info("Initializing Stanza Tokenizer")
 
-    try:
-        import stanza
+    stanza = _load_optional_dependency("stanza", "stanza", "stanza")
 
-        if not offline:
-            stanza.download(language)
+    if not offline:
+        stanza.download(language)
 
-        nlp = stanza.Pipeline(language, download_method=None)
-        stanza_initialized = True
-    except Exception as e:
-        print(f"Error initializing stanza tokenizer: {e}")
-        stanza_initialized = False
+    nlp = stanza.Pipeline(language, download_method=None)
+    stanza_initialized = True
 
 
 def _remove_links(text: str) -> str:
@@ -202,8 +208,7 @@ def _tokenize_sentences(
         language = language or current_language
 
         if tokenizer == "nltk":
-            import nltk
-
+            nltk = _load_optional_dependency("nltk", "nltk", "nltk")
             sentences = nltk.tokenize.sent_tokenize(text)
         elif tokenizer == "rule-based":
             sentences = _rule_based_tokenize_sentences(
@@ -218,8 +223,6 @@ def _tokenize_sentences(
                 never_split_numbers=never_split_numbers,
             )
         elif tokenizer == "stanza":
-            import stanza
-
             global nlp
             doc = nlp(text)
             sentences = [sentence.text for sentence in doc.sentences]
@@ -323,8 +326,7 @@ def _nltk_rule_based_tokenize_sentences(
     language: str = "en",
     never_split_numbers: bool = False,
 ) -> list[str]:
-    import nltk
-
+    nltk = _load_optional_dependency("nltk", "nltk", "nltk+rule-based")
     nltk_sentences = nltk.tokenize.sent_tokenize(text)
     rule_based_sentences = _rule_based_tokenize_sentences(
         text,
@@ -362,7 +364,7 @@ def init_tokenizer(tokenizer: str, language: str = "en", offline=False, debug=Fa
         initialize_nltk(language, debug)
         return
     else:
-        logging.warning(f"Unknown tokenizer: {tokenizer}")
+        raise ValueError(f"Unknown tokenizer: {tokenizer}")
 
 
 async def generate_sentences_async(
@@ -377,7 +379,7 @@ async def generate_sentences_async(
     cleanup_text_links: bool = False,
     cleanup_text_emojis: bool = False,
     tokenize_sentences=None,
-    tokenizer: str = "nltk",
+    tokenizer: str = "rule-based",
     language: str = "en",
     log_characters: bool = False,
     sentence_fragment_delimiters: str = ".?!;:,\n…)]}。-",
@@ -428,7 +430,7 @@ async def generate_sentences_async(
         tokenize_sentences (Callable): A function that tokenizes sentences
           from the input text. Defaults to None.
         tokenizer (str): The tokenizer to use for sentence tokenization.
-          Default is "nltk". Can be "nltk", "stanza", "rule-based", or
+          Default is "rule-based". Can be "nltk", "stanza", "rule-based", or
           "nltk+rule-based". The "nltk+rule-based" tokenizer splits at
           boundaries accepted by both NLTK and the rule-based tokenizer, plus
           rule-based boundaries promoted by high-confidence local checks.
@@ -555,7 +557,7 @@ class SentenceSplitter:
         cleanup_text_links: bool = False,
         cleanup_text_emojis: bool = False,
         tokenize_sentences=None,
-        tokenizer: str = "nltk",
+        tokenizer: str = "rule-based",
         language: str = "en",
         log_characters: bool = False,
         sentence_fragment_delimiters: str = ".?!;:,\n…)]}。-",
@@ -604,7 +606,7 @@ class SentenceSplitter:
             tokenize_sentences (Callable): A function that tokenizes sentences
             from the input text. Defaults to None.
             tokenizer (str): The tokenizer to use for sentence tokenization.
-            Default is "nltk". Can be "nltk", "stanza", "rule-based", or
+            Default is "rule-based". Can be "nltk", "stanza", "rule-based", or
             "nltk+rule-based". The "nltk+rule-based" tokenizer splits at
             boundaries accepted by both NLTK and the rule-based tokenizer, plus
             rule-based boundaries promoted by high-confidence local checks.
