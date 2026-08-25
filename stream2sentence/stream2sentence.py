@@ -389,6 +389,7 @@ async def generate_sentences_async(
     debug=False,
     auto_context: bool = False,
     never_split_numbers: bool = False,
+    fragment_lookahead_words: int = 0,
 ) -> AsyncIterator[str]:
     """
     Generates well-formed sentences from a stream of characters or text chunks
@@ -454,6 +455,12 @@ async def generate_sentences_async(
         never_split_numbers (bool): If True, bare integer tokens ending in a
           period, such as "1.", are treated as non-sentence boundaries.
           Default is False.
+        fragment_lookahead_words (int): Number of completed words to observe
+          before a quick-yield fragment delimiter becomes eligible. Once the
+          threshold is reached, a confirmed full-sentence boundary is preferred
+          over an earlier soft delimiter such as a comma. Streams ending before
+          the threshold are flushed normally. Default is 0, which preserves
+          immediate quick-yield behavior.
 
     Yields:
         Iterator[str]: An iterator of complete sentences constructed from the
@@ -477,6 +484,7 @@ async def generate_sentences_async(
         quick_yield_every_fragment=quick_yield_every_fragment,
         auto_context=auto_context,
         never_split_numbers=never_split_numbers,
+        fragment_lookahead_words=fragment_lookahead_words,
         cleanup_text_links=cleanup_text_links,
         cleanup_text_emojis=cleanup_text_emojis,
         tokenize_sentences=tokenize_sentences,
@@ -567,6 +575,7 @@ class SentenceSplitter:
         debug=False,
         auto_context: bool = False,
         never_split_numbers: bool = False,
+        fragment_lookahead_words: int = 0,
     ):
         """
         Generates well-formed sentences from a stream of characters or text chunks
@@ -630,6 +639,12 @@ class SentenceSplitter:
             never_split_numbers (bool): If True, bare integer tokens ending in a
             period, such as "1.", are treated as non-sentence boundaries.
             Default is False.
+            fragment_lookahead_words (int): Number of completed words to observe
+            before a quick-yield fragment delimiter becomes eligible. Once the
+            threshold is reached, a confirmed full-sentence boundary is preferred
+            over an earlier soft delimiter such as a comma. Streams ending before
+            the threshold are flushed normally. Default is 0, which preserves
+            immediate quick-yield behavior.
 
         Yields:
             Iterator[str]: An iterator of complete sentences constructed from the
@@ -648,12 +663,17 @@ class SentenceSplitter:
         current_tokenizer = _normalize_tokenizer(tokenizer)
         init_tokenizer(current_tokenizer, language, debug=debug)
 
+        if fragment_lookahead_words < 0:
+            raise ValueError("fragment_lookahead_words must be non-negative")
+
         self.input_buffer = collections.deque[str]()
         self.buffer = ""
         self.is_first_sentence = True
         self.word_count = 0  # Initialize word count
         self.last_delimiter_position = -1  # Position of last full sentence delimiter
         self.pending_quick_yield_boundary = None
+        self.preferred_quick_yield_boundaries = []
+        self.fallback_quick_yield_boundaries = []
 
         # Adjust quick yield flags based on settings
         if quick_yield_every_fragment:
@@ -684,6 +704,7 @@ class SentenceSplitter:
         self.sentence_fragment_delimiters = sentence_fragment_delimiters
         self.full_sentence_delimiters = full_sentence_delimiters
         self.force_first_fragment_after_words = force_first_fragment_after_words
+        self.fragment_lookahead_words = fragment_lookahead_words
         self.filter_first_non_alnum_characters = filter_first_non_alnum_characters
         self.debug = debug
 
@@ -714,6 +735,59 @@ class SentenceSplitter:
     def _is_quick_yield_pre_terminal_closing_mark(self, boundary_position):
         return self.buffer[boundary_position] in _QUICK_YIELD_PRE_TERMINAL_CLOSING_MARKS
 
+    def _remember_quick_yield_boundary(
+        self,
+        boundary_position,
+        boundary_end=None,
+    ):
+        if boundary_end is None:
+            boundary_end = self._quick_yield_boundary_end(boundary_position)
+
+        if boundary_end + 1 <= self.minimum_first_fragment_length:
+            return
+
+        if self.buffer[boundary_position] in self.full_sentence_delimiters:
+            boundaries = self.preferred_quick_yield_boundaries
+        else:
+            boundaries = self.fallback_quick_yield_boundaries
+
+        if not boundaries or boundaries[-1] != boundary_end:
+            boundaries.append(boundary_end)
+
+    def _fragment_lookahead_boundary(self):
+        if self.fragment_lookahead_words <= 0:
+            return None
+        if len(self.buffer.split()) < self.fragment_lookahead_words:
+            return None
+        if self.preferred_quick_yield_boundaries:
+            return self.preferred_quick_yield_boundaries[0]
+        if self.fallback_quick_yield_boundaries:
+            return self.fallback_quick_yield_boundaries[-1]
+        return None
+
+    def _shift_quick_yield_boundaries(self, consumed_length):
+        self.preferred_quick_yield_boundaries = [
+            position - consumed_length
+            for position in self.preferred_quick_yield_boundaries
+            if position >= consumed_length
+        ]
+        self.fallback_quick_yield_boundaries = [
+            position - consumed_length
+            for position in self.fallback_quick_yield_boundaries
+            if position >= consumed_length
+        ]
+
+        if self.pending_quick_yield_boundary is not None:
+            if self.pending_quick_yield_boundary >= consumed_length:
+                self.pending_quick_yield_boundary -= consumed_length
+            else:
+                self.pending_quick_yield_boundary = None
+
+    def _clear_quick_yield_boundaries(self):
+        self.preferred_quick_yield_boundaries = []
+        self.fallback_quick_yield_boundaries = []
+        self.pending_quick_yield_boundary = None
+
     def _auto_context_boundary_offset(self):
         if not self.auto_context or self.last_delimiter_position < 0:
             return None
@@ -739,15 +813,31 @@ class SentenceSplitter:
         return bool(offsets) and offsets[0] == boundary_offset
 
     def _consume_quick_yield_text(self, boundary_position=None):
+        original_buffer = self.buffer
         if boundary_position is None:
-            text = self.buffer
+            text = original_buffer
             self.buffer = ""
+            consumed_length = len(original_buffer)
         else:
-            text = self.buffer[:boundary_position + 1]
-            self.buffer = self.buffer[boundary_position + 1:].lstrip()
+            text = original_buffer[:boundary_position + 1]
+            remainder = original_buffer[boundary_position + 1:]
+            self.buffer = remainder.lstrip()
+            consumed_length = len(original_buffer) - len(self.buffer)
 
-        self.word_count = 0
-        self.pending_quick_yield_boundary = None
+        if self.fragment_lookahead_words > 0:
+            self._shift_quick_yield_boundaries(consumed_length)
+            self.word_count = sum(
+                char.isspace() or char in self.sentence_fragment_delimiters
+                for char in self.buffer
+            )
+            if self.last_delimiter_position >= consumed_length:
+                self.last_delimiter_position -= consumed_length
+            else:
+                self.last_delimiter_position = -1
+        else:
+            self.word_count = 0
+            self.pending_quick_yield_boundary = None
+
         if not self.quick_yield_every_fragment:
             self.is_first_sentence = False
 
@@ -791,11 +881,17 @@ class SentenceSplitter:
                             if action != HOLD:
                                 self.pending_quick_yield_boundary = None
                             if action == SPLIT:
-                                yield_text = self._consume_quick_yield_text(boundary_end)
-                                if self.debug:
-                                    print("\033[36mDebug: Yielding first sentence fragment: \"{}\" after confirming pending delimiter\033[0m".format(yield_text))
-                                yield yield_text
-                                continue
+                                if self.fragment_lookahead_words > 0:
+                                    self._remember_quick_yield_boundary(
+                                        boundary_position,
+                                        boundary_end,
+                                    )
+                                else:
+                                    yield_text = self._consume_quick_yield_text(boundary_end)
+                                    if self.debug:
+                                        print("\033[36mDebug: Yielding first sentence fragment: \"{}\" after confirming pending delimiter\033[0m".format(yield_text))
+                                    yield yield_text
+                                    continue
 
                     # Update word count on encountering space or sentence fragment delimiter
                     if char.isspace() or char in self.sentence_fragment_delimiters:
@@ -829,16 +925,43 @@ class SentenceSplitter:
                                 self.pending_quick_yield_boundary = boundary_position
                                 continue
 
-                            yield_text = self._consume_quick_yield_text()
+                            if self.fragment_lookahead_words > 0:
+                                self._remember_quick_yield_boundary(
+                                    boundary_position,
+                                )
+                            else:
+                                yield_text = self._consume_quick_yield_text()
+                                if self.debug:
+                                    print("\033[36mDebug: Yielding first sentence fragment: \"{}\" because buffer[-1] is sentence frag \033[0m".format(yield_text))
+
+                                yield yield_text
+
+                                continue
+
+                        lookahead_boundary = None
+                        if (
+                            char.isspace()
+                            or char in self.sentence_fragment_delimiters
+                        ):
+                            lookahead_boundary = self._fragment_lookahead_boundary()
+                        if lookahead_boundary is not None:
+                            yield_text = self._consume_quick_yield_text(
+                                lookahead_boundary,
+                            )
                             if self.debug:
-                                print("\033[36mDebug: Yielding first sentence fragment: \"{}\" because buffer[-1] is sentence frag \033[0m".format(yield_text))
-
+                                print("\033[36mDebug: Yielding first sentence fragment: \"{}\" after fragment lookahead\033[0m".format(yield_text))
                             yield yield_text
-
                             continue
 
-                        if char.isspace() and self.word_count >= self.force_first_fragment_after_words:
-                            word_count = self.word_count
+                        force_word_count = self.word_count
+                        if self.fragment_lookahead_words > 0:
+                            force_word_count = len(self.buffer.split())
+
+                        if (
+                            char.isspace()
+                            and force_word_count >= self.force_first_fragment_after_words
+                        ):
+                            word_count = force_word_count
                             yield_text = self._consume_quick_yield_text()
                             if self.debug:
                                 print("\033[36mDebug: Yielding first sentence fragment: \"{}\" because word_count {} is >= force_first_fragment_after_words \033[0m".format(yield_text, word_count))
@@ -963,11 +1086,26 @@ class SentenceSplitter:
                                 ends_with_space = self.buffer.endswith(" ")
 
                                 # set buffer to last unfinshed sentence returned by tokenizers
-                                self.buffer = sentences[-1]
+                                remaining_sentence = sentences[-1]
+                                remaining_start = self.buffer.rfind(remaining_sentence)
+                                self.buffer = remaining_sentence
 
                                 # reset the blank space if it was there:
                                 if ends_with_space:
                                     self.buffer += " "
+
+                                if self.fragment_lookahead_words > 0:
+                                    if remaining_start >= 0:
+                                        self._shift_quick_yield_boundaries(
+                                            remaining_start,
+                                        )
+                                    else:
+                                        self._clear_quick_yield_boundaries()
+                                    self.word_count = sum(
+                                        char.isspace()
+                                        or char in self.sentence_fragment_delimiters
+                                        for char in self.buffer
+                                    )
 
                                 # reset the last delimiter position after yielding
                                 self.last_delimiter_position = -1 

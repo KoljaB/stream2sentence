@@ -143,6 +143,7 @@ class TestSentenceGenerator(unittest.TestCase):
             "debug",
             "auto_context",
             "never_split_numbers",
+            "fragment_lookahead_words",
         ]
 
         for callable_ in (generate_sentences, generate_sentences_async, SentenceSplitter):
@@ -378,6 +379,115 @@ class TestSentenceGenerator(unittest.TestCase):
             quick_yield_single_sentence_fragment=True,
             minimum_sentence_length=6,
             minimum_first_fragment_length=6,
+        )
+
+    def test_fragment_lookahead_holds_short_stream_until_end(self):
+        text = "Freut mich, das zu hören."
+        expected = [text]
+
+        for source in (text, chunk_text(text, 1), chunk_text(text, 4)):
+            with self.subTest(source=source):
+                self.assertQuickYieldSentences(
+                    source,
+                    expected,
+                    context_size=999,
+                    fragment_lookahead_words=8,
+                )
+
+    def test_fragment_lookahead_prefers_sentence_end_over_earlier_comma(self):
+        text = (
+            "Freut mich, das zu hören. "
+            "Danach reden wir gemeinsam weiter."
+        )
+        expected = [
+            "Freut mich, das zu hören.",
+            "Danach reden wir gemeinsam weiter.",
+        ]
+
+        for source in (text, chunk_text(text, 1), chunk_text(text, 4)):
+            with self.subTest(source=source):
+                self.assertQuickYieldSentences(
+                    source,
+                    expected,
+                    context_size=999,
+                    fragment_lookahead_words=8,
+                )
+
+    def test_fragment_lookahead_uses_earlier_comma_after_eight_words(self):
+        text = (
+            "Freut mich, dass Sie sich nach so langer "
+            "Zeit wieder einmal hier einfinden."
+        )
+        expected = [
+            "Freut mich,",
+            "dass Sie sich nach so langer Zeit wieder einmal hier einfinden.",
+        ]
+
+        for source in (text, chunk_text(text, 1), chunk_text(text, 4)):
+            with self.subTest(source=source):
+                self.assertQuickYieldSentences(
+                    source,
+                    expected,
+                    context_size=999,
+                    fragment_lookahead_words=8,
+                )
+
+    def test_fragment_lookahead_uses_latest_soft_boundary(self):
+        text = (
+            "Dr. Müller, den wir seit vielen Jahren kennen, "
+            "kommt morgen vorbei."
+        )
+        expected = [
+            "Dr. Müller, den wir seit vielen Jahren kennen,",
+            "kommt morgen vorbei.",
+        ]
+
+        self.assertQuickYieldSentences(
+            text,
+            expected,
+            context_size=999,
+            fragment_lookahead_words=8,
+        )
+
+    def test_fragment_lookahead_yields_while_source_is_still_streaming(self):
+        chunks = [
+            "Freut ",
+            "mich, ",
+            "dass ",
+            "Sie ",
+            "sich ",
+            "nach ",
+            "so ",
+            "langer ",
+            "Zeit ",
+            "wieder ",
+            "einmal ",
+            "hier ",
+            "einfinden.",
+        ]
+        consumed = []
+
+        def source():
+            for chunk in chunks:
+                consumed.append(chunk)
+                yield chunk
+
+        sentences = generate_sentences(
+            source(),
+            quick_yield_single_sentence_fragment=True,
+            minimum_sentence_length=3,
+            minimum_first_fragment_length=3,
+            tokenize_sentences=simple_sentence_tokenizer,
+            tokenizer="rule-based",
+            context_size=999,
+            fragment_lookahead_words=8,
+        )
+
+        self.assertEqual(next(sentences), "Freut mich,")
+        self.assertEqual(consumed, chunks[:8])
+        self.assertEqual(
+            list(sentences),
+            ["dass Sie sich nach so langer Zeit wieder einmal hier einfinden."],
         )
 
     def test_quick_yield_does_not_split_decimal_price(self):

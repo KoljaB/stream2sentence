@@ -191,6 +191,18 @@ These parameters control how quickly and frequently the generator yields sentenc
   - Ensures timely output even with long opening sentences.
   - Default: 15 words
 
+- `fragment_lookahead_words: int = 0`
+  - Buffers quick-yield delimiter candidates until this many complete words have
+    been observed.
+  - At the threshold, a confirmed delimiter from
+    `full_sentence_delimiters` is preferred over an earlier soft delimiter
+    such as a comma; otherwise the latest soft delimiter is used.
+  - If the input stream ends before the threshold, the remaining text is flushed
+    normally.
+  - This counts observed words, not words in the yielded fragment. For example,
+    after eight observed words the splitter may yield an earlier two-word clause.
+  - Default: 0, preserving immediate quick-yield behavior.
+
 
 ## Time based strategy
 Instead of a purely lexigraphical strategy, a time based strategy is available.
