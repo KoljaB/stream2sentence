@@ -1405,11 +1405,15 @@ class QuickYieldBoundaryDetector:
 
     def _matching_abbreviation(self, text):
         folded = text.casefold()
+        dotted_text = folded.replace("۔", ".") if self.language == "ur" else folded
         for abbreviation in self.abbreviations:
-            if not folded.endswith(abbreviation):
+            # Normalize known multi-dot abbreviations, including mixed punctuation.
+            # Single-dot entries can also be ordinary words ending a sentence.
+            candidate = dotted_text if abbreviation.count(".") > 1 else folded
+            if not candidate.endswith(abbreviation):
                 continue
 
-            prefix = folded[: -len(abbreviation)]
+            prefix = candidate[: -len(abbreviation)]
             if not prefix:
                 return abbreviation
 

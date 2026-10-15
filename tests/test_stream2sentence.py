@@ -567,6 +567,118 @@ class TestSentenceGenerator(unittest.TestCase):
             **delimiters,
         )
 
+    def test_urdu_dotted_abbreviations_keep_sentence_continuations(self):
+        for abbreviation in ("ق.م.", "ق۔م۔", "ق.م۔", "ق۔م."):
+            expected = [
+                f"یہ واقعہ 300 {abbreviation} میں پیش آیا۔",
+                "اگلا جملہ ہے۔",
+            ]
+            text = " ".join(expected)
+            for size in (1, 3, 7, len(text)):
+                for quick_yield in (False, True):
+                    with self.subTest(abbreviation=abbreviation, size=size, quick_yield=quick_yield):
+                        self.assertEqual(
+                            list(generate_sentences(
+                                chunk_text(text, size),
+                                language="ur",
+                                quick_yield_single_sentence_fragment=quick_yield,
+                            )),
+                            expected,
+                        )
+
+    def test_urdu_abbreviation_prefix_waits_for_sentence_end(self):
+        for abbreviation in ("ق۔م۔", "ق.م۔", "ق۔م."):
+            with self.subTest(abbreviation=abbreviation):
+                splitter = SentenceSplitter(
+                    language="urdu",
+                    quick_yield_single_sentence_fragment=True,
+                )
+                prefix = f"یہ واقعہ 300 {abbreviation} "
+                for char in prefix:
+                    splitter.add(char)
+                    self.assertEqual(list(splitter.stream()), [])
+
+                splitter.add("میں پیش آیا۔ اگلا جملہ ہے۔")
+                self.assertEqual(
+                    list(splitter.stream()) + list(splitter.flush()),
+                    [prefix + "میں پیش آیا۔", "اگلا جملہ ہے۔"],
+                )
+
+    def test_urdu_dictionary_words_can_still_end_sentences(self):
+        # The dictionary also contains وغیرہ. and میٹر.; these are ordinary words.
+        first_sentences = (
+            "اس نے کئی چیزیں خریدیں، مثلاً کتابیں، قلم وغیرہ۔",
+            "اس سڑک کی لمبائی ہے سو میٹر۔",
+        )
+        for first in first_sentences:
+            expected = [first, "پھر وہ گھر چلا گیا۔"]
+            for quick_yield in (False, True):
+                with self.subTest(first=first, quick_yield=quick_yield):
+                    self.assertEqual(
+                        list(generate_sentences(
+                            list(" ".join(expected)),
+                            language="ur",
+                            quick_yield_single_sentence_fragment=quick_yield,
+                        )),
+                        expected,
+                    )
+
+    def test_urdu_default_delimiters_yield_before_stream_end(self):
+        expected = [
+            "آج پاکستان میں موسم خوبصورت ہے۔",
+            "کل افغانستان میں موسم خوشگوار ہوگا۔",
+        ]
+        text = " ".join(expected)
+        for size in (1, 3, 7):
+            for quick_yield in (False, True):
+                with self.subTest(size=size, quick_yield=quick_yield):
+                    consumed = []
+                    exhausted = False
+
+                    def source():
+                        nonlocal exhausted
+                        for chunk in chunk_text(text, size):
+                            consumed.append(chunk)
+                            yield chunk
+                        exhausted = True
+
+                    sentences = generate_sentences(
+                        source(),
+                        quick_yield_single_sentence_fragment=quick_yield,
+                    )
+                    self.assertEqual(next(sentences), expected[0])
+                    self.assertFalse(exhausted)
+                    self.assertLess(len("".join(consumed)), len(text))
+                    self.assertEqual(list(sentences), expected[1:])
+
+    def test_urdu_splitter_defaults_yield_before_flush(self):
+        expected = [
+            "آج پاکستان میں موسم خوبصورت ہے۔",
+            "کل افغانستان میں موسم خوشگوار ہوگا۔",
+        ]
+        for quick_yield in (False, True):
+            with self.subTest(quick_yield=quick_yield):
+                splitter = SentenceSplitter(
+                    quick_yield_single_sentence_fragment=quick_yield,
+                )
+                splitter.add(" ".join(expected))
+                self.assertEqual(list(splitter.stream()), expected[:1])
+                self.assertEqual(list(splitter.flush()), expected[1:])
+
+    def test_urdu_custom_delimiters_remain_authoritative(self):
+        expected = [
+            "آج پاکستان میں موسم خوبصورت ہے۔",
+            "کل افغانستان میں موسم خوشگوار ہوگا۔",
+        ]
+        splitter = SentenceSplitter(
+            quick_yield_single_sentence_fragment=True,
+            sentence_fragment_delimiters=".?!",
+            full_sentence_delimiters=".?!",
+        )
+        splitter.add(" ".join(expected))
+        self.assertEqual(list(splitter.stream()), [])
+        self.assertEqual(list(splitter.flush()), expected)
+
     def test_quick_yield_uses_default_numeric_period_policy(self):
         text = "The score was 3. Next month it improved."
         expected = ["The score was 3.", "Next month it improved."]

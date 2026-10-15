@@ -176,15 +176,15 @@ These parameters control how quickly and frequently the generator yields sentenc
   - Useful for debugging or monitoring real-time processing.
   - Default: False
 
-- `sentence_fragment_delimiters: str = ".?!;:,\n…)]}。-"`
+- `sentence_fragment_delimiters: str = ".?!;:,\n…)]}。۔-"`
   - Characters considered as potential sentence fragment delimiters.
   - Used for quick yielding of sentence fragments.
-  - Default: ".?!;:,\n…)]}。-"
+  - Default: ".?!;:,\n…)]}。۔-"
 
-- `full_sentence_delimiters: str = ".?!\n…。"`
+- `full_sentence_delimiters: str = ".?!\n…。۔"`
   - Characters considered as full sentence delimiters.
   - Used for more definitive sentence boundary detection.
-  - Default: ".?!\n…。"
+  - Default: ".?!\n…。۔"
 
 - `force_first_fragment_after_words: int = 15`
   - Forces the yield of the first sentence fragment after this many words.
