@@ -1233,7 +1233,8 @@ class QuickYieldBoundaryDetector:
         if delimiter in ")]}":
             return REJECT if self._closes_bracketed_value(buffer, delimiter_index) else SPLIT
 
-        if delimiter == ".":
+        # U+06D4 is the Urdu full stop; it ends sentences and abbreviations like "."
+        if delimiter in ".۔":
             return self._classify_period(buffer, delimiter_index, next_char)
 
         if delimiter == ",":

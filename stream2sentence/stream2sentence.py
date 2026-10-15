@@ -31,7 +31,7 @@ stanza_initialized = False
 nltk_initialized = False
 nlp = None
 
-_QUICK_YIELD_TERMINATORS = ".?!。！？؟।"
+_QUICK_YIELD_TERMINATORS = ".?!。！？؟।۔"
 _QUICK_YIELD_CLOSING_MARKS = "\"')]}”’»›"
 _QUICK_YIELD_PRE_TERMINAL_CLOSING_MARKS = ")]}"
 
@@ -239,7 +239,7 @@ def _rule_based_tokenize_sentences(
     never_split_numbers: bool = False,
 ) -> list[str]:
     detector = get_boundary_detector(language, never_split_numbers)
-    sentence_terminators = set(".?!。！？؟।")
+    sentence_terminators = set(".?!。！？؟।۔")
     closing_marks = "\"')]}”’»›"
     sentences = []
     start = 0

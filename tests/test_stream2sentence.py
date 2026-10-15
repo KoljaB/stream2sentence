@@ -25,8 +25,8 @@ AUTO_CONTEXT_WORKFLOW_TOKENIZER = "nltk+rule-based"
 RUN_STANZA_INTEGRATION = os.environ.get("STREAM2SENTENCE_RUN_STANZA_TESTS") == "1"
 
 
-MULTILINGUAL_DELIMITERS = ".?!;:,\n…)]}。！？؟।-"
-MULTILINGUAL_FULL_DELIMITERS = ".?!\n…。！？؟।"
+MULTILINGUAL_DELIMITERS = ".?!;:,\n…)]}。！？؟।۔-"
+MULTILINGUAL_FULL_DELIMITERS = ".?!\n…。！？؟।۔"
 
 
 def chunk_text(text, size):
@@ -546,6 +546,26 @@ class TestSentenceGenerator(unittest.TestCase):
         for text in cases:
             with self.subTest(text=text):
                 self.assertQuickYieldSingleSentence(text, never_split_numbers=True)
+
+    def test_urdu_full_stop_keeps_abbreviations_and_list_numbers_together(self):
+        delimiters = {
+            "sentence_fragment_delimiters": MULTILINGUAL_DELIMITERS,
+            "full_sentence_delimiters": MULTILINGUAL_FULL_DELIMITERS,
+        }
+        # A letter right after ۔ continues the token, as in the abbreviation ق۔م۔ (BCE).
+        self.assertQuickYieldSingleSentence("یہ واقعہ 300 ق۔م۔", language="ur", **delimiters)
+        self.assertQuickYieldSingleSentence(
+            "۱۔ پہلا نکتہ ۲۔ دوسرا نکتہ آج",
+            language="ur",
+            never_split_numbers=True,
+            **delimiters,
+        )
+        self.assertQuickYieldSentences(
+            "میں ٹھیک ہوں۔ آج موسم اچھا ہے۔",
+            ["میں ٹھیک ہوں۔", "آج موسم اچھا ہے۔"],
+            language="ur",
+            **delimiters,
+        )
 
     def test_quick_yield_uses_default_numeric_period_policy(self):
         text = "The score was 3. Next month it improved."
@@ -2439,6 +2459,17 @@ MULTILINGUAL_GOLD_BOUNDARY_CASES = [
             "बैठक 10:30 बजे है।",
             "क्या तुम आओगे?",
             "ठीक है।",
+        ],
+    ),
+    (
+        "urdu",
+        "ur",
+        "آج ڈاکٹر صاحب آئیں گے۔ میٹنگ 10:30 بجے ہے۔ کیا آپ آئیں گے؟ ٹھیک ہے۔",
+        [
+            "آج ڈاکٹر صاحب آئیں گے۔",
+            "میٹنگ 10:30 بجے ہے۔",
+            "کیا آپ آئیں گے؟",
+            "ٹھیک ہے۔",
         ],
     ),
     (
