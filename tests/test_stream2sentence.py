@@ -1091,6 +1091,72 @@ class TestSentenceGenerator(unittest.TestCase):
                     ["One.", "Two. Three."],
                 )
 
+    def test_consensus_tokenizer_keeps_boundaries_nltk_cannot_see(self):
+        # NLTK's Punkt only ends sentences at . ? !, so it never agrees on
+        # । 。 ！ ？ ؟ ۔; the rule-based boundary decides those alone.
+        cases = [
+            ("hi", "नमस्ते दोस्त। आप कैसे हो? मैं ठीक हूँ।", ["नमस्ते दोस्त।", "आप कैसे हो?", "मैं ठीक हूँ।"]),
+            ("bn", "আমি ভালো আছি। তুমি কেমন আছ?", ["আমি ভালো আছি।", "তুমি কেমন আছ?"]),
+            ("zh", "今天天气很好。我们去公园吧？好的！", ["今天天气很好。", "我们去公园吧？", "好的！"]),
+            ("ur", "میں ٹھیک ہوں۔ آپ کیسے ہیں؟", ["میں ٹھیک ہوں۔", "آپ کیسے ہیں؟"]),
+            # half-width punctuation with no space after it
+            ("zh", "你好吗?我很好!今天天气很好.", ["你好吗?", "我很好!", "今天天气很好."]),
+        ]
+        stream2sentence_module = importlib.import_module("stream2sentence.stream2sentence")
+        for language, text, expected in cases:
+            with self.subTest(language=language):
+                self.assertEqual(
+                    stream2sentence_module._tokenize_sentences(
+                        text,
+                        tokenizer="nltk+rule-based",
+                        language=language,
+                    ),
+                    expected,
+                )
+
+    def test_consensus_tokenizer_split_streams_hindi_at_danda(self):
+        text = "नमस्ते दोस्त। आप कैसे हो? मैं ठीक हूँ। आज मौसम अच्छा है।"
+        self.assertEqual(
+            list(generate_sentences(chunk_text(text, 3), tokenizer="nltk+rule-based", language="hi")),
+            ["नमस्ते दोस्त।", "आप कैसे हो?", "मैं ठीक हूँ।", "आज मौसम अच्छा है।"],
+        )
+
+    def test_consensus_tokenizer_does_not_override_inside_tokens_or_quotes(self):
+        stream2sentence_module = importlib.import_module("stream2sentence.stream2sentence")
+        cases = [
+            # no cut between 。 and the closing 」
+            ("zh", "「你好。」他说。然后走了。", ["「你好。」他说。", "然后走了。"]),
+            ("en", "Version 2。5 is out. Yes.", ["Version 2。5 is out.", "Yes."]),
+            ("en", "Meet Dr。 Smith today.", ["Meet Dr。 Smith today."]),
+        ]
+        for language, text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(
+                    stream2sentence_module._tokenize_sentences(
+                        text, tokenizer="nltk+rule-based", language=language
+                    ),
+                    expected,
+                )
+
+    def test_consensus_tokenizer_still_needs_nltk_for_latin_terminators(self):
+        stream2sentence_module = importlib.import_module("stream2sentence.stream2sentence")
+        text = "One. Two。"
+
+        with mock.patch("nltk.tokenize.sent_tokenize", return_value=["One. Two。"]):
+            with mock.patch.object(
+                stream2sentence_module,
+                "_rule_based_tokenize_sentences",
+                return_value=["One.", "Two。"],
+            ):
+                self.assertEqual(
+                    stream2sentence_module._tokenize_sentences(
+                        text,
+                        tokenizer="nltk+rule-based",
+                        language="en",
+                    ),
+                    ["One. Two。"],
+                )
+
     def test_consensus_tokenizer_handles_punctuation_heavy_char_stream(self):
         self.assertEqual(
             list(generate_sentences(
