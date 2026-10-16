@@ -233,6 +233,23 @@ def _tokenize_sentences(
     return sentences
 
 
+def _sentence_separators(text: str, sentences: list[str]) -> list[str]:
+    """Separator to put before each sentence when joining it to the previous
+    one: "" where ``text`` has nothing between them (Chinese and Japanese after
+    。 or ！), otherwise " " as before. Sentences are located in order, so a
+    repeated sentence is matched at its own position."""
+    separators = []
+    position = 0
+    for sentence in sentences:
+        start = text.find(sentence, position)
+        if start < 0:
+            separators.append(" ")
+            continue
+        separators.append("" if start == position and separators else " ")
+        position = start + len(sentence)
+    return separators
+
+
 def _rule_based_tokenize_sentences(
     text: str,
     language: str = "en",
@@ -1044,12 +1061,13 @@ class SentenceSplitter:
                     combined_sentences = []
                     temp_sentence = ""
 
-                    for sentence in sentences:
+                    separators = _sentence_separators(self.buffer, sentences)
+                    for sentence, separator in zip(sentences, separators):
                         if len(sentence) < self.minimum_sentence_length:
-                            temp_sentence += sentence + " "
+                            temp_sentence += (separator if temp_sentence else "") + sentence
                         else:
                             if temp_sentence:
-                                temp_sentence += sentence
+                                temp_sentence += separator + sentence
                                 combined_sentences.append(temp_sentence.strip())
                                 temp_sentence = ""
                             else:
@@ -1145,11 +1163,10 @@ class SentenceSplitter:
             )
             sentence_buffer = ""
 
-            for sentence in sentences:
-                sentence_buffer += sentence
+            separators = _sentence_separators(self.buffer, sentences)
+            for sentence, separator in zip(sentences, separators):
+                sentence_buffer += (separator if sentence_buffer else "") + sentence
                 if len(sentence_buffer) < self.minimum_sentence_length:
-                    sentence_buffer += " "
-
                     continue
 
                 yield_text = _clean_text(
