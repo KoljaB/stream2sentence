@@ -3,6 +3,7 @@ from .stream2sentence import (
     generate_sentences_async,
     init_tokenizer,
     SentenceSplitter,
+    AvailableTextRun,
 )
 
 from .stream2sentence_time_based import (

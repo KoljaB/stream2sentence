@@ -84,15 +84,28 @@ for sentence in generate_sentences(
     print(sentence)
 ```
 
+### Keep already-queued sentences together
+
+Start speaking early, then keep already-queued sentences together.
+When the complete text is already queued, `AvailableTextRun` keeps a later
+`We can do that tomorrow, though.` together instead of sending `though.`
+to speech synthesis on its own. The first fragment keeps its usual early release.
+A later sentence may wait for the usual sentence-end confirmation instead of
+being released at the comma. Pass only text you already have; do not wait to
+fill a batch. Ordinary strings keep the existing behavior.
+
+See [the example and integration guide](docs/available-text-runs.md).
+
 ## Configuration
 
 The `generate_sentences()` function offers various parameters to fine-tune its behavior:
 
 ### Core Parameters
 
-- `generator: Iterator[str]`
+- `generator: Iterable[str | AvailableTextRun]`
   - The primary input source, yielding chunks of text to be processed.
   - Can be any iterator that emits text chunks of any size.
+  - AvailableTextRun marks text already queued. It keeps later complete sentences together; their output still follows normal sentence-end checks.
 
 - `context_size: int = 12`
   - Number of characters considered for sentence boundary detection.
@@ -176,15 +189,15 @@ These parameters control how quickly and frequently the generator yields sentenc
   - Useful for debugging or monitoring real-time processing.
   - Default: False
 
-- `sentence_fragment_delimiters: str = ".?!;:,\n…)]}。۔-"`
+- `sentence_fragment_delimiters: str = ".?!;:,\n…)]}。！？؟।۔-"`
   - Characters considered as potential sentence fragment delimiters.
   - Used for quick yielding of sentence fragments.
-  - Default: ".?!;:,\n…)]}。۔-"
+  - Default: ".?!;:,\n…)]}。！？؟।۔-"
 
-- `full_sentence_delimiters: str = ".?!\n…。۔"`
+- `full_sentence_delimiters: str = ".?!\n…。！？؟।۔"`
   - Characters considered as full sentence delimiters.
   - Used for more definitive sentence boundary detection.
-  - Default: ".?!\n…。۔"
+  - Default: ".?!\n…。！？؟।۔"
 
 - `force_first_fragment_after_words: int = 15`
   - Forces the yield of the first sentence fragment after this many words.

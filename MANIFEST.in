@@ -1,1 +1,3 @@
 prune tests
+include RELEASE_NOTES.md
+include docs/available-text-runs.md

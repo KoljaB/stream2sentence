@@ -9,6 +9,7 @@ import importlib
 import logging
 import re
 import time
+from dataclasses import dataclass
 from typing import (
     AsyncIterable,
     AsyncIterator,
@@ -32,8 +33,24 @@ nltk_initialized = False
 nlp = None
 
 _QUICK_YIELD_TERMINATORS = ".?!。！？؟।۔"
+_RULE_BASED_SENTENCE_TERMINATORS = frozenset(".?!。！？؟।۔")
+
 _QUICK_YIELD_CLOSING_MARKS = "\"')]}”’»›"
 _QUICK_YIELD_PRE_TERMINAL_CLOSING_MARKS = ")]}"
+
+
+@dataclass(frozen=True)
+class AvailableTextRun:
+    """A contiguous snapshot of text the producer already has available.
+
+    Producers should bound snapshot size without waiting for future input.
+    Consecutive pieces of one snapshot can share a run_id; a new snapshot
+    gets a new id. The id is metadata, not an instruction to wait for a run
+    to finish. Plain strings keep their existing streaming behavior.
+    """
+
+    text: str
+    run_id: int
 
 
 def _normalize_tokenizer(tokenizer: str) -> str:
@@ -201,7 +218,7 @@ def _tokenize_sentences(
         Iterator[str]: An iterator of sentences
     """
     if tokenize_sentences:
-        sentences = tokenize_sentences(text)
+        sentences = list(tokenize_sentences(text))
     else:
         nlp_start_time = time.time()
         tokenizer = _normalize_tokenizer(tokenizer or current_tokenizer)
@@ -256,7 +273,7 @@ def _rule_based_tokenize_sentences(
     never_split_numbers: bool = False,
 ) -> list[str]:
     detector = get_boundary_detector(language, never_split_numbers)
-    sentence_terminators = set(".?!。！？؟।۔")
+    sentence_terminators = _RULE_BASED_SENTENCE_TERMINATORS
     closing_marks = "\"')]}”’»›"
     sentences = []
     start = 0
@@ -341,22 +358,33 @@ def _sentences_from_boundary_offsets(text: str, offsets: list[int]) -> list[str]
 _CJK_CLOSING_MARKS = "」』）】〕》〉"
 
 
-def _nltk_cannot_see_boundary(text: str, offset: int, nltk_terminators) -> bool:
-    """True for a boundary NLTK can never agree on, so the rule-based split
-    decides alone: Punkt only ends sentences at . ? ! followed by whitespace,
-    which rules out । 。 ؟ ۔ and unspaced CJK punctuation. Boundaries right
-    after an ASCII character (Dr。, 2。5) or before a CJK closing bracket keep
-    needing NLTK's agreement.
+def _nltk_cannot_see_boundary(
+    text: str, offset: int, nltk_terminators: tuple[str, ...]
+) -> bool:
+    """Allow rule-based boundaries outside Punkt's supported context.
+
+    The rule-based detector supplies abbreviation and numeric guards. Inspect
+    the whole terminal sequence (including ?!) rather than treating its final
+    punctuation mark as the preceding word. Keep ordinary unspaced ASCII text
+    and boundaries before CJK closing brackets subject to consensus.
     """
-    index = offset - 1
-    while index > 0 and text[index] in _QUICK_YIELD_CLOSING_MARKS:
-        index -= 1
-    if index < 1 or text[index - 1].isascii():
+    end = offset
+    while end > 0 and text[end - 1] in _QUICK_YIELD_CLOSING_MARKS:
+        end -= 1
+    start = end
+    while start > 0 and text[start - 1] in _RULE_BASED_SENTENCE_TERMINATORS:
+        start -= 1
+    if start == 0 or start == end:
         return False
+
     next_char = text[offset:offset + 1]
     if next_char and next_char in _CJK_CLOSING_MARKS:
         return False
-    return text[index] not in nltk_terminators or (next_char != "" and not next_char.isspace())
+    if any(char not in nltk_terminators for char in text[start:end]):
+        return True
+    return bool(next_char) and not next_char.isspace() and (
+        not text[start - 1].isascii() or not next_char.isascii()
+    )
 
 
 def _nltk_rule_based_tokenize_sentences(
@@ -408,7 +436,7 @@ def init_tokenizer(tokenizer: str, language: str = "en", offline=False, debug=Fa
 
 
 async def generate_sentences_async(
-    generator: AsyncIterable[str],
+    generator: AsyncIterable[str | AvailableTextRun],
     context_size: int = 12,
     context_size_look_overhead: int = 12,
     minimum_sentence_length: int = 10,
@@ -422,8 +450,8 @@ async def generate_sentences_async(
     tokenizer: str = "rule-based",
     language: str = "en",
     log_characters: bool = False,
-    sentence_fragment_delimiters: str = ".?!;:,\n…)]}。۔-",
-    full_sentence_delimiters: str = ".?!\n…。۔",
+    sentence_fragment_delimiters: str = ".?!;:,\n…)]}。！？؟।۔-",
+    full_sentence_delimiters: str = ".?!\n…。！？؟।۔",
     force_first_fragment_after_words=30,
     filter_first_non_alnum_characters: bool = False,
     debug=False,
@@ -436,8 +464,11 @@ async def generate_sentences_async(
       provided by an input generator.
 
     Args:
-        generator (Iterator[str]): A generator that yields chunks of text as a
-          stream of characters.
+        generator (AsyncIterable[str | AvailableTextRun]): Text chunks, or
+          explicitly marked snapshots of text already available. Snapshots
+          keep later complete sentences together after the first quick
+          fragment. Producers must not wait to fill a snapshot. Later sentences
+          may still await normal sentence-end confirmation or end of stream.
         context_size (int): The number of characters used to establish context
           for sentence boundary detection. A larger context improves the
           accuracy of detecting sentence boundaries.
@@ -480,9 +511,9 @@ async def generate_sentences_async(
         log_characters (bool): If True, logs each character to the console as
           they are processed.
         sentence_fragment_delimiters (str): A string of characters that are
-          considered sentence fragment delimiters. Default is ".?!;:,\n…)]}。-".
+          considered sentence fragment delimiters. Default is ".?!;:,\n…)]}。！？؟।۔-".
         full_sentence_delimiters (str): A string of characters that are
-          considered full sentence delimiters. Default is ".?!\n…。".
+          considered full sentence delimiters. Default is ".?!\n…。！？؟।۔".
         force_first_fragment_after_words (int): The number of words after
           which the first sentence fragment is forced to be yielded.
           Default is 30 words.
@@ -574,10 +605,10 @@ P = ParamSpec("P")
 
 
 def _dowrap(
-    f: Callable[Concatenate[AsyncIterable[str], P], AsyncIterator[str]]
-) -> Callable[Concatenate[Iterable[str], P], Iterator[str]]:
+    f: Callable[Concatenate[AsyncIterable[str | AvailableTextRun], P], AsyncIterator[str]]
+) -> Callable[Concatenate[Iterable[str | AvailableTextRun], P], Iterator[str]]:
     @functools.wraps(f)
-    def inner(generator: Iterable[str], *args: P.args, **kwargs: P.kwargs):
+    def inner(generator: Iterable[str | AvailableTextRun], *args: P.args, **kwargs: P.kwargs):
         async def gen_wrap():
             for x in generator:
                 yield x
@@ -608,8 +639,8 @@ class SentenceSplitter:
         tokenizer: str = "rule-based",
         language: str = "en",
         log_characters: bool = False,
-        sentence_fragment_delimiters: str = ".?!;:,\n…)]}。۔-",
-        full_sentence_delimiters: str = ".?!\n…。۔",
+        sentence_fragment_delimiters: str = ".?!;:,\n…)]}。！？؟।۔-",
+        full_sentence_delimiters: str = ".?!\n…。！？؟।۔",
         force_first_fragment_after_words=30,
         filter_first_non_alnum_characters: bool = False,
         debug=False,
@@ -664,9 +695,9 @@ class SentenceSplitter:
             log_characters (bool): If True, logs each character to the console as
             they are processed.
             sentence_fragment_delimiters (str): A string of characters that are
-            considered sentence fragment delimiters. Default is ".?!;:,\n…)]}。-".
+            considered sentence fragment delimiters. Default is ".?!;:,\n…)]}。！？؟।۔-".
             full_sentence_delimiters (str): A string of characters that are
-            considered full sentence delimiters. Default is ".?!\n…。".
+            considered full sentence delimiters. Default is ".?!\n…。！？؟।۔".
             force_first_fragment_after_words (int): The number of words after
             which the first sentence fragment is forced to be yielded.
             Default is 30 words.
@@ -706,9 +737,20 @@ class SentenceSplitter:
         if fragment_lookahead_words < 0:
             raise ValueError("fragment_lookahead_words must be non-negative")
 
-        self.input_buffer = collections.deque[str]()
+        self.input_buffer = collections.deque[str | AvailableTextRun]()
         self.buffer = ""
+        self._buffer_has_rule_terminator = False
         self.is_first_sentence = True
+        # Keep metadata on queued chunks until they are consumed. A cached
+        # lookahead decision applies only to the current unconsumed text;
+        # adding input or consuming a sentence/fragment invalidates it.
+        self._available_run_id = None
+        self._available_run_quick_yield = False
+        self._available_run_quick_yield_allowed = None
+        self._available_run_spans = None
+        self._available_run_buffer_offset = 0
+        self._available_run_chunk = None
+        self._available_run_remaining_start = 0
         self.word_count = 0  # Initialize word count
         self.last_delimiter_position = -1  # Position of last full sentence delimiter
         self.pending_quick_yield_boundary = None
@@ -748,8 +790,92 @@ class SentenceSplitter:
         self.filter_first_non_alnum_characters = filter_first_non_alnum_characters
         self.debug = debug
 
-    def add(self, chunk: str):
+    def add(self, chunk: str | AvailableTextRun):
+        """Queue a text chunk or an already-available snapshot for stream()."""
         self.input_buffer.append(chunk)
+        self._invalidate_available_run_lookahead()
+
+    def _invalidate_available_run_lookahead(self):
+        self._available_run_quick_yield_allowed = None
+        self._available_run_spans = None
+        self._available_run_buffer_offset = 0
+
+    def _consume_available_run_prefix(self, length):
+        self._available_run_quick_yield_allowed = None
+        self._available_run_buffer_offset += length
+
+    def _prepare_available_run_lookahead(self):
+        remaining_parts = []
+        if self._available_run_chunk is not None:
+            remaining_parts.append(
+                self._available_run_chunk[self._available_run_remaining_start:]
+            )
+        # Only contiguous pieces of this snapshot are eligible. A later
+        # marker must never change an earlier plain string's policy.
+        for queued in self.input_buffer:
+            if (not isinstance(queued, AvailableTextRun)
+                    or queued.run_id != self._available_run_id):
+                break
+            remaining_parts.append(queued.text)
+        candidate = self.buffer + "".join(remaining_parts)
+        sentences = _tokenize_sentences(
+            candidate,
+            self.tokenize_sentences,
+            self.tokenizer,
+            self.language,
+            self.never_split_numbers,
+        )
+        sentences = [sentence.strip() for sentence in sentences if sentence.strip()]
+        spans = collections.deque()
+        search_start = 0
+        for index, sentence in enumerate(sentences):
+            start = candidate.find(sentence, search_start)
+            if start < 0 or candidate[search_start:start].strip():
+                # A custom tokenizer may rewrite text. Without reliable
+                # source offsets, preserve ordinary quick yielding.
+                spans.clear()
+                break
+            end = start + len(sentence)
+            terminal = sentence.rstrip(_QUICK_YIELD_CLOSING_MARKS)
+            complete = bool(terminal and terminal[-1] in self.full_sentence_delimiters)
+            if complete and index == len(sentences) - 1:
+                # Tokenizers also return an unfinished final tail. A trailing
+                # dot in 'Dr.' or '1.' alone is not proof of a complete sentence.
+                position = len(terminal) - 1
+                next_char = sentence[position + 1] if position + 1 < len(sentence) else None
+                complete = self.quick_yield_boundary_detector.classify(
+                    sentence, position, next_char, allow_terminal_end=True,
+                ) == SPLIT
+            spans.append((end, complete))
+            search_start = end
+        if candidate[search_start:].strip():
+            spans.clear()
+        self._available_run_spans = spans
+        self._available_run_buffer_offset = 0
+
+    def _available_run_allows_quick_yield(self):
+        # An explicit request for every fragment takes precedence over the
+        # optional already-available sentence optimization.
+        if self.quick_yield_every_fragment:
+            return True
+        if self._available_run_id is None or not self._available_run_quick_yield:
+            return True
+        if self._available_run_quick_yield_allowed is not None:
+            return self._available_run_quick_yield_allowed
+        if self._available_run_spans is None:
+            self._prepare_available_run_lookahead()
+        # Tokenize the snapshot once, then advance through its sentence ends.
+        # Re-evaluating a sentence must not rescan the entire remaining run.
+        spans = self._available_run_spans
+        offset = self._available_run_buffer_offset
+        while spans and spans[0][0] <= offset:
+            spans.popleft()
+        allowed = True
+        if spans:
+            end, complete = spans[0]
+            allowed = not complete or end <= offset + len(self.buffer.rstrip())
+        self._available_run_quick_yield_allowed = allowed
+        return allowed
 
     def _quick_yield_boundary_end(self, boundary_position):
         boundary_end = boundary_position
@@ -864,6 +990,10 @@ class SentenceSplitter:
             self.buffer = remainder.lstrip()
             consumed_length = len(original_buffer) - len(self.buffer)
 
+        self._consume_available_run_prefix(consumed_length)
+        self._buffer_has_rule_terminator = any(
+            mark in self.buffer for mark in _RULE_BASED_SENTENCE_TERMINATORS
+        )
         if self.fragment_lookahead_words > 0:
             self._shift_quick_yield_boundaries(consumed_length)
             self.word_count = sum(
@@ -878,6 +1008,9 @@ class SentenceSplitter:
             self.word_count = 0
             self.pending_quick_yield_boundary = None
 
+        if self._available_run_id is not None:
+            self._available_run_quick_yield = True
+
         if not self.quick_yield_every_fragment:
             self.is_first_sentence = False
 
@@ -885,15 +1018,48 @@ class SentenceSplitter:
 
     def stream(self):
         while self.input_buffer:
-            chunk = self.input_buffer.popleft()
-            for char in _generate_characters_from_chunk(chunk, self.log_characters):
+            queued_chunk = self.input_buffer.popleft()
+            if isinstance(queued_chunk, AvailableTextRun):
+                chunk = queued_chunk.text
+                if self._available_run_id != queued_chunk.run_id:
+                    self._invalidate_available_run_lookahead()
+                self._available_run_id = queued_chunk.run_id
+                self._available_run_chunk = chunk
+            else:
+                chunk = queued_chunk
+                self._available_run_id = None
+                self._available_run_chunk = None
+                self._available_run_quick_yield = False
+                self._invalidate_available_run_lookahead()
+            for char_index, char in enumerate(
+                _generate_characters_from_chunk(chunk, self.log_characters)
+            ):
+                if self._available_run_id is not None:
+                    self._available_run_chunk = chunk
+                    self._available_run_remaining_start = char_index + 1
                 if char:
                     if len(self.buffer) == 0:
                         if self.filter_first_non_alnum_characters:
                             if not char.isalnum():
+                                self._consume_available_run_prefix(len(char))
                                 continue
 
-                    self.buffer = (self.buffer + char).lstrip()
+                    extended_buffer = self.buffer + char
+                    self.buffer = extended_buffer.lstrip()
+                    if len(extended_buffer) != len(self.buffer):
+                        self._consume_available_run_prefix(
+                            len(extended_buffer) - len(self.buffer)
+                        )
+                    if char in _RULE_BASED_SENTENCE_TERMINATORS:
+                        self._buffer_has_rule_terminator = True
+
+                    if (
+                        self.is_first_sentence
+                        and self.quick_yield_single_sentence_fragment
+                        and self.pending_quick_yield_boundary is not None
+                        and not self._available_run_allows_quick_yield()
+                    ):
+                        self.pending_quick_yield_boundary = None
 
                     if self.pending_quick_yield_boundary is not None:
                         boundary_position = self.pending_quick_yield_boundary
@@ -941,10 +1107,36 @@ class SentenceSplitter:
                         print("\033[36mDebug: Added char, buffer size: \"{}\"\033[0m".format(len(self.buffer)))
 
                     # Check conditions to yield first sentence fragment quickly
+                    available_run_allows = True
+                    if (
+                        self.is_first_sentence
+                        and self.quick_yield_single_sentence_fragment
+                        and self._available_run_id is not None
+                        and self._available_run_quick_yield
+                        and (
+                            self.pending_quick_yield_boundary is not None
+                            or (self.buffer and self.buffer[-1] in self.sentence_fragment_delimiters)
+                            or (
+                                self.fragment_lookahead_words > 0
+                                and (
+                                    char.isspace()
+                                    or char in self.sentence_fragment_delimiters
+                                )
+                            )
+                            or (
+                                char.isspace()
+                                and self.word_count
+                                >= self.force_first_fragment_after_words
+                            )
+                        )
+                    ):
+                        available_run_allows = self._available_run_allows_quick_yield()
+
                     if (
                         self.is_first_sentence
                         and len(self.buffer) > self.minimum_first_fragment_length
                         and self.quick_yield_single_sentence_fragment
+                        and available_run_allows
                     ):
 
                         if self.buffer[-1] in self.sentence_fragment_delimiters:
@@ -1010,7 +1202,8 @@ class SentenceSplitter:
 
                             continue
 
-                    if self.auto_context and char in self.full_sentence_delimiters:
+                    # Remember early delimiters while waiting for enough context.
+                    if char in self.full_sentence_delimiters:
                         self.last_delimiter_position = len(self.buffer) - 1
 
                     context_ready = (
@@ -1026,9 +1219,6 @@ class SentenceSplitter:
                         ):
                             continue
 
-                    elif char in self.full_sentence_delimiters:
-                        self.last_delimiter_position = len(self.buffer) - 1
-
                     auto_context_boundary_offset = self._auto_context_boundary_offset()
                     if not context_ready and auto_context_boundary_offset is None:
                         continue
@@ -1040,6 +1230,14 @@ class SentenceSplitter:
                     )
                     if context_window_start_pos < 0:
                         context_window_start_pos = 0
+
+                    # The built-in rule tokenizer cannot split without one of
+                    # its terminators. Other tokenizers/callables keep their
+                    # original invocation contract. Quick yield ran above.
+                    if (self.tokenizer == "rule-based"
+                            and self.tokenize_sentences is None
+                            and not self._buffer_has_rule_terminator):
+                        continue
 
                     # Tokenize sentences from buffer
                     sentences = _tokenize_sentences(
@@ -1129,11 +1327,24 @@ class SentenceSplitter:
                                 # set buffer to last unfinshed sentence returned by tokenizers
                                 remaining_sentence = sentences[-1]
                                 remaining_start = self.buffer.rfind(remaining_sentence)
+                                previous_buffer = self.buffer
                                 self.buffer = remaining_sentence
+                                self._buffer_has_rule_terminator = any(
+                                    mark in self.buffer
+                                    for mark in _RULE_BASED_SENTENCE_TERMINATORS
+                                )
 
                                 # reset the blank space if it was there:
                                 if ends_with_space:
                                     self.buffer += " "
+
+                                if (remaining_start >= 0
+                                        and self.buffer == previous_buffer[remaining_start:]):
+                                    self._consume_available_run_prefix(remaining_start)
+                                else:
+                                    # Whitespace normalization or custom token
+                                    # rewriting invalidates cached source offsets.
+                                    self._invalidate_available_run_lookahead()
 
                                 if self.fragment_lookahead_words > 0:
                                     if remaining_start >= 0:
@@ -1149,7 +1360,10 @@ class SentenceSplitter:
                                     )
 
                                 # reset the last delimiter position after yielding
-                                self.last_delimiter_position = -1 
+                                self.last_delimiter_position = -1
+
+            self._available_run_chunk = None
+            self._available_run_remaining_start = 0
 
     def flush(self):
         # Yield remaining buffer as final sentence(s)

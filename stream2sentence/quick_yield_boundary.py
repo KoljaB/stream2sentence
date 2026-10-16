@@ -1218,24 +1218,32 @@ class QuickYieldBoundaryDetector:
         self.language, self.abbreviations, self.currency_symbols = _language_detector_config(language)
         self.never_split_numbers = never_split_numbers
 
-    def classify(self, buffer, delimiter_index, next_char=None):
+    def classify(self, buffer, delimiter_index, next_char=None, *, allow_terminal_end=False):
+        # Available-text lookahead can assess an apparent final sentence end
+        # without inventing a following word. Only the generic missing-context
+        # hold is relaxed; abbreviation, number, URL, and name guards remain.
         delimiter = buffer[delimiter_index]
 
-        if delimiter in "\n\u3002\uff01":
+        if delimiter == "\u3002":
+            return self._classify_ideographic_full_stop(
+                buffer, delimiter_index, next_char, allow_terminal_end
+            )
+
+        if delimiter in "\n\uff01":
             return SPLIT
 
         if delimiter == "!":
-            return self._classify_exclamation_mark(buffer, delimiter_index)
+            return self._classify_exclamation_mark(buffer, delimiter_index, allow_terminal_end)
 
         if delimiter in "?\uff1f":
-            return self._classify_question_mark(buffer, delimiter_index, next_char)
+            return self._classify_question_mark(buffer, delimiter_index, next_char, allow_terminal_end)
 
         if delimiter in ")]}":
             return REJECT if self._closes_bracketed_value(buffer, delimiter_index) else SPLIT
 
         # U+06D4 is the Urdu full stop; it ends sentences and abbreviations like "."
         if delimiter in ".۔":
-            return self._classify_period(buffer, delimiter_index, next_char)
+            return self._classify_period(buffer, delimiter_index, next_char, allow_terminal_end)
 
         if delimiter == ",":
             return self._classify_comma(buffer, delimiter_index, next_char)
@@ -1284,7 +1292,32 @@ class QuickYieldBoundaryDetector:
             and self._is_capitalized_phrase_token(clean_token)
         )
 
-    def _classify_period(self, buffer, delimiter_index, next_char):
+    def _classify_ideographic_full_stop(
+        self, buffer, delimiter_index, next_char, allow_terminal_end
+    ):
+        # Apply the existing abbreviation rules to a local period equivalent.
+        left = buffer[:delimiter_index]
+        if self._matching_abbreviation(left + "."):
+            normalized = left + "." + buffer[delimiter_index + 1:]
+            return self._classify_period(
+                normalized, delimiter_index, next_char, allow_terminal_end
+            )
+
+        previous = left[-1:]
+        if previous.isdecimal():
+            if next_char is None:
+                return HOLD
+            if next_char.isdecimal():
+                return REJECT
+
+        # A CJK full stop can also occur inside an ASCII domain/token.
+        if (previous.isascii() and previous.isalnum()
+                and next_char is not None
+                and next_char.isascii() and next_char.isalnum()):
+            return REJECT
+        return SPLIT
+
+    def _classify_period(self, buffer, delimiter_index, next_char, allow_terminal_end=False):
         left = buffer[: delimiter_index + 1]
         abbreviation = self._matching_abbreviation(left)
         if abbreviation:
@@ -1295,6 +1328,11 @@ class QuickYieldBoundaryDetector:
             return REJECT
 
         token = self._current_token(left)
+        if (allow_terminal_end
+                and token[:-1].lstrip("+-").replace(".", "").replace(",", "").isdigit()):
+            # At a snapshot boundary, a numeric dot may still continue a
+            # decimal or numbered item; preserve ordinary quick yielding.
+            return HOLD
         if self.never_split_numbers and token[:-1].isdigit():
             return REJECT
         if next_char is not None and self._continues_token(next_char):
@@ -1310,33 +1348,33 @@ class QuickYieldBoundaryDetector:
         if contextual_action is not None:
             return contextual_action
 
-        continuation_action = self._classify_terminal_continuation(buffer, delimiter_index)
+        continuation_action = self._classify_terminal_continuation(buffer, delimiter_index, allow_terminal_end)
         if continuation_action is not None:
             return continuation_action
 
-        return REJECT if self._continues_token(next_char) else SPLIT
+        return REJECT if next_char is not None and self._continues_token(next_char) else SPLIT
 
-    def _classify_exclamation_mark(self, buffer, delimiter_index):
+    def _classify_exclamation_mark(self, buffer, delimiter_index, allow_terminal_end=False):
         punctuated_name_action = self._classify_punctuated_name(buffer, delimiter_index)
         if punctuated_name_action != SPLIT:
             return punctuated_name_action
 
-        continuation_action = self._classify_terminal_continuation(buffer, delimiter_index)
+        continuation_action = self._classify_terminal_continuation(buffer, delimiter_index, allow_terminal_end)
         return continuation_action if continuation_action is not None else SPLIT
 
-    def _classify_question_mark(self, buffer, delimiter_index, next_char):
+    def _classify_question_mark(self, buffer, delimiter_index, next_char, allow_terminal_end=False):
         if not self._inside_url_token(buffer, delimiter_index):
             punctuated_name_action = self._classify_punctuated_name(buffer, delimiter_index)
             if punctuated_name_action != SPLIT:
                 return punctuated_name_action
-            continuation_action = self._classify_terminal_continuation(buffer, delimiter_index)
+            continuation_action = self._classify_terminal_continuation(buffer, delimiter_index, allow_terminal_end)
             return continuation_action if continuation_action is not None else SPLIT
 
         if next_char is None:
             return HOLD
         return REJECT if self._continues_token(next_char) else SPLIT
 
-    def _classify_terminal_continuation(self, buffer, delimiter_index):
+    def _classify_terminal_continuation(self, buffer, delimiter_index, allow_terminal_end=False):
         index = delimiter_index + 1
         while index < len(buffer) and buffer[index] in _TERMINAL_MARKS:
             index += 1
@@ -1346,7 +1384,7 @@ class QuickYieldBoundaryDetector:
             index += 1
 
         if index >= len(buffer):
-            return HOLD
+            return None if allow_terminal_end else HOLD
 
         next_visible = buffer[index]
         if next_visible == "," or next_visible.islower():
