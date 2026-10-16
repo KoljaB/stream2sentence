@@ -306,6 +306,32 @@ class TestSentenceGenerator(unittest.TestCase):
         expected = ["How I feel?", "I feel fine"]
         self.assertGeneratedSentences(text, expected)
 
+    def test_short_sentences_join_without_adding_a_space_cjk_text_lacks(self):
+        cases = [
+            ("zh", "你好。今天天气很好！我们去公园吧？", ["你好。今天天气很好！", "我们去公园吧？"]),
+            ("ja", "こんにちは。今日はいい天気ですね！公園に行きましょう？", ["こんにちは。今日はいい天気ですね！", "公園に行きましょう？"]),
+            # the space that is in the text is kept
+            ("en", "Hi. How are you doing today? Fine.", ["Hi. How are you doing today?", "Fine."]),
+            # whitespace between two short sentences still becomes one space, and
+            # the joins after it still follow the text
+            ("zh", "你好。\n好的。是的。今天天气很好啊朋友们！", ["你好。 好的。是的。", "今天天气很好啊朋友们！"]),
+            ("ja", "はい。　いいえ。今日はいい天気ですね！", ["はい。 いいえ。今日はいい天気ですね！"]),
+            # a repeated short sentence is matched at its own position
+            (
+                "zh",
+                "好。是。今天天气很好啊朋友们！好。 是。 明天也很好吧朋友们！",
+                ["好。是。今天天气很好啊朋友们！", "好。 是。 明天也很好吧朋友们！"],
+            ),
+        ]
+        for language, text, expected in cases:
+            for stream_name, stream in (
+                ("single_chunk", [text]),
+                ("char_stream", list(text)),
+                ("three_char_chunks", chunk_text(text, 3)),
+            ):
+                with self.subTest(language=language, stream=stream_name):
+                    self.assertEqual(list(generate_sentences(stream, language=language)), expected)
+
     def test_hello_world(self):
         text = "Hello, world."
         expected = ["Hello,", "world."]
