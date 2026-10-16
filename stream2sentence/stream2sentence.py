@@ -321,6 +321,27 @@ def _sentences_from_boundary_offsets(text: str, offsets: list[int]) -> list[str]
     return sentences
 
 
+_CJK_CLOSING_MARKS = "」』）】〕》〉"
+
+
+def _nltk_cannot_see_boundary(text: str, offset: int, nltk_terminators) -> bool:
+    """True for a boundary NLTK can never agree on, so the rule-based split
+    decides alone: Punkt only ends sentences at . ? ! followed by whitespace,
+    which rules out । 。 ؟ ۔ and unspaced CJK punctuation. Boundaries right
+    after an ASCII character (Dr。, 2。5) or before a CJK closing bracket keep
+    needing NLTK's agreement.
+    """
+    index = offset - 1
+    while index > 0 and text[index] in _QUICK_YIELD_CLOSING_MARKS:
+        index -= 1
+    if index < 1 or text[index - 1].isascii():
+        return False
+    next_char = text[offset:offset + 1]
+    if next_char and next_char in _CJK_CLOSING_MARKS:
+        return False
+    return text[index] not in nltk_terminators or (next_char != "" and not next_char.isspace())
+
+
 def _nltk_rule_based_tokenize_sentences(
     text: str,
     language: str = "en",
@@ -336,9 +357,11 @@ def _nltk_rule_based_tokenize_sentences(
     nltk_offsets = set(_sentence_boundary_offsets(text, nltk_sentences))
     rule_based_offsets = set(_sentence_boundary_offsets(text, rule_based_sentences))
     detector = get_boundary_detector(language, never_split_numbers)
+    nltk_terminators = nltk.tokenize.punkt.PunktLanguageVars.sent_end_chars
     override_offsets = {
         offset for offset in rule_based_offsets - nltk_offsets
         if detector.is_high_confidence_sentence_boundary(text, offset - 1)
+        or _nltk_cannot_see_boundary(text, offset, nltk_terminators)
     }
     consensus_offsets = sorted((nltk_offsets & rule_based_offsets) | override_offsets)
 
