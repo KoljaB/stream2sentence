@@ -28,6 +28,8 @@ https://github.com/user-attachments/assets/0428d806-4b30-47fa-9cfe-8fb42c95b2e4
 
 ## Installation
 
+Requires Python 3.10 or newer.
+
 ```bash
 pip install stream2sentence
 ```
@@ -68,7 +70,9 @@ Yet, there's more.
 This ends now.
 ```
 
-One main use case of this library is enable fast text to speech synthesis in the context of character feeds generated from large language models: this library enables fastest possible access to a complete sentence or sentence fragment (using the quick_yield_single_sentence_fragment flag) that then can be synthesized in realtime. The usage of this is demonstrated in the test_stream_from_llm.py file in the tests directory.
+For speech synthesis, enable `quick_yield_single_sentence_fragment` to start speaking before the first full sentence is available. See `tests/test_stream_from_llm.py` for a live API example.
+
+Use `generate_sentences_async()` with an asynchronous input iterator. For a push-style integration, create a `SentenceSplitter`, call `add(chunk)`, consume `stream()` after each addition, and consume `flush()` at the end. It drains pending input and resets the splitter for reuse; another flush without new input yields nothing. Exhaust each returned iterator before adding more input.
 
 ### Recommended English setup
 
@@ -164,12 +168,15 @@ These parameters control how quickly and frequently the generator yields sentenc
   - When True, removes emoji characters from the output sentences.
   - Default: False
 
+- `filter_first_non_alnum_characters: bool = False`
+  - Discards non-alphanumeric characters at the start of an empty output buffer, including after a yield.
+
 ### Tokenization
 
 - `tokenize_sentences: Callable = None`
-  - Custom function for sentence tokenization.
-  - If None, uses the default tokenizer specified by `tokenizer`.
-  - Default: None
+  - Custom function accepting text and returning an iterable of sentence strings, including any unfinished tail. Lists and one-shot iterators are supported.
+  - Return unchanged substrings to preserve their original separators. Rewritten output uses a single space between pieces.
+  - If None, uses `tokenizer`.
 
 - `tokenizer: str = "rule-based"`
   - Specifies the tokenizer to use. Options: "nltk", "stanza", "rule-based", or "nltk+rule-based"
@@ -179,10 +186,17 @@ These parameters control how quickly and frequently the generator yields sentenc
 
 - `language: str = "en"`
   - Language setting for the tokenizer.
-  - Use "en" for English, "multilingual" for Stanza tokenizer, or a supported language code/name for rule-based heuristic data.
+  - Selects rule-based language data and the Stanza pipeline. For Stanza, use a supported language code such as `"en"` or `"zh"`; `"multilingual"` is not a sentence-tokenization pipeline.
+  - NLTK uses its English sentence model, including in `"nltk+rule-based"`. NLTK and Stanza download model data on first use.
   - Default: "en"
 
+- `never_split_numbers: bool = False`
+  - Treats bare integers followed by a period, such as `1.`, as non-terminal in rule-based boundary checks. Useful for numbered text; it can also hold back a sentence ending in an integer.
+
 ### Debugging and Fine-tuning
+
+- `debug: bool = False`
+  - Prints internal boundary and yield decisions.
 
 - `log_characters: bool = False`
   - When True, logs each processed character to the console.
@@ -199,10 +213,10 @@ These parameters control how quickly and frequently the generator yields sentenc
   - Used for more definitive sentence boundary detection.
   - Default: ".?!\n…。！？؟।۔"
 
-- `force_first_fragment_after_words: int = 15`
+- `force_first_fragment_after_words: int = 30`
   - Forces the yield of the first sentence fragment after this many words.
   - Ensures timely output even with long opening sentences.
-  - Default: 15 words
+  - Default: 30 words; use `float("inf")` to disable forced word-count yielding.
 
 - `fragment_lookahead_words: int = 0`
   - Buffers quick-yield delimiter candidates until this many complete words have
@@ -218,7 +232,7 @@ These parameters control how quickly and frequently the generator yields sentenc
 
 
 ## Time based strategy
-Instead of a purely lexigraphical strategy, a time based strategy is available.
+Instead of a purely lexical strategy, a time based strategy is available.
 A target tokens per second (tps) is input, and generate_sentences will yield the best
 available output (full sentence, longest fragment, or any available buffer, in that order) if it is approaching a "deadline"
 where what has been output would be slower than the input tps target. If LLM is more than
@@ -228,25 +242,25 @@ two full sentences ahead of the target it will output a sentence even if it's ah
 
 ### Parameters
 - `generator (Iterator[str])`
-  - A generator that yields chunks of text as a stream of characters.`
+  - A generator that yields text chunks.
 - `target_tps: float = 4`
   - the rate in tokens per second you want to use to calculate deadlines for output.
   - Default is 4. (approximately the speed of human speech)
 - `lead_time: float = 1`
   - amount of time in seconds to wait for the buffer to build for before returning values.
 - `max_wait_for_fragments = [3, 2]`
-  - Max amount of time in seconds that the Nth sentence will wait beyond the "deadline" for a "fragment" (text preceeding a fragment delimiter), which is preferred over a piece of buffer.
+  - Max amount of time in seconds that the Nth sentence will wait beyond the "deadline" for a "fragment" (text preceding a fragment delimiter), which is preferred over a piece of buffer.
   - The last value in the array is used for all subsequent checks.
 - `min_output_lengths: int[] = [2, 3, 3, 4]`
   - An array that corresponds to the minimum output size in words for the corresponding output sentence, the last value in the array is used for all remaining output.
   - For example [4,5,6] would mean the first piece of output must have 4 words, the second 5 words, and all subsequent 6.
 - `preferred_sentence_fragment_delimiters: str[] = ['. ', '? ', '! ', '\n']`
-  - Array of strings that deliniate a sentence fragment. "Preferred" are checked first and always used if the fragment meets the length requirement over the other fragment delimiters.
+  - Array of strings that delimit a sentence fragment. "Preferred" are checked first and always used if the fragment meets the length requirement over the other fragment delimiters.
   - Note the trailing spaces, added to differentiate between values like $3.5 and a proper sentence end
 - `sentence_fragment_delimiters: str[] = ['; ', ': ', ', ', '* ', '**', '– ']`
   - Array of strings that are checked after "preferred" delimiters
 - `delimiter_ignore_prefixes: str[]` 
-  - Array of strings that will not be considered "delimiters" if preceeded by a delimiter.
+  - Array of strings that will not be considered "delimiters" if preceded by a delimiter.
   - Used to ignore common abbreviations for things like Mr. Dr. and Mrs. where we don't want to split
   - Default is a long list documented in delimiter_ignore_prefixes
 - `wait_for_if_non_fragment: str[]`
@@ -260,6 +274,21 @@ two full sentences ahead of the target it will output a sentence even if it's ah
   - Added to account for the time it takes a TTS engine to generate output. 
   - For example, if it takes your TTS engine around 1 second to generate 10 words, you can use a value of 0.1 so that the TTS generation time is included in the deadline. 
   - Applied to first n sentences, last value applied to all subsequent
+
+## Release checks
+
+From a source checkout, use an activated virtual environment:
+
+```bash
+python -m pip install -e ".[all]" build twine
+python tools/run_release_checks.py
+python -m build
+python -m twine check --strict dist/stream2sentence-1.1.0*
+```
+
+The runner checks dependencies, runs all unit tests with real NLTK and Stanza integrations enabled, and runs four timing scenarios. It fails on any failed or skipped test, missing output, text mismatch, or timing outside the allowed tolerance. First use needs network access for model data; the full run takes several minutes. The two live LLM API examples are manual demos and are not part of this automated suite. On Windows, `tests/run_test.bat` runs the same checks using the project virtual environment when present.
+
+Passing these checks is release evidence, not a claim of complete code coverage or bug-free behavior. See [the 1.1.0 release notes](RELEASE_NOTES.md).
 
 ## Contributing
 

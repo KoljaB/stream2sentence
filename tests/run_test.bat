@@ -1,8 +1,8 @@
 @echo off
-
-:: switch to current execution directory
-cd /d %~dp0
-
-TITLE basic stream2sentence test 
-python test_stream2sentence.py
-pause
+cd /d "%~dp0.."
+if exist ".venv\Scripts\python.exe" (
+    ".venv\Scripts\python.exe" tools\run_release_checks.py
+) else (
+    python tools\run_release_checks.py
+)
+exit /b %errorlevel%

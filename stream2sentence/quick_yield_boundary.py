@@ -12,8 +12,8 @@ SPLIT = "split"
 HOLD = "hold"
 REJECT = "reject"
 
-_OPENING_MARKS = "\"'([{“‘«‹"
-_CLOSING_MARKS = "\"')]}”’»›"
+_OPENING_MARKS = "\"'([{“‘«‹「『（【〔《〈"
+_CLOSING_MARKS = "\"')]}”’»›」』）】〕》〉"
 _TERMINAL_MARKS = ".?!？"
 
 _EN_AMBIGUOUS_ABBREVIATIONS = {

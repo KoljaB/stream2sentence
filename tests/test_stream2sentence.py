@@ -99,34 +99,20 @@ class TestSentenceGenerator(unittest.TestCase):
             "stream2sentence.stream2sentence"
         )
 
-        for tokenizer, initialized_attribute, extra in (
-            ("nltk", "nltk_initialized", "nltk"),
-            ("stanza", "stanza_initialized", "stanza"),
-        ):
+        for tokenizer, extra in (("nltk", "nltk"), ("stanza", "stanza")):
             with self.subTest(tokenizer=tokenizer):
-                old_initialized = getattr(
-                    stream2sentence_module,
-                    initialized_attribute,
-                )
-                setattr(stream2sentence_module, initialized_attribute, False)
                 missing = ModuleNotFoundError(f"No module named '{extra}'")
                 missing.name = extra
-                try:
-                    with mock.patch(
-                        "stream2sentence.stream2sentence.importlib.import_module",
-                        side_effect=missing,
-                    ):
-                        with self.assertRaisesRegex(
-                            ModuleNotFoundError,
-                            rf"stream2sentence\[{extra}\]",
+                with mock.patch.object(stream2sentence_module, "nltk_initialized", False), \
+                        mock.patch.dict(stream2sentence_module._stanza_pipelines, clear=True), \
+                        mock.patch(
+                            "stream2sentence.stream2sentence.importlib.import_module",
+                            side_effect=missing,
                         ):
-                            SentenceSplitter(tokenizer=tokenizer)
-                finally:
-                    setattr(
-                        stream2sentence_module,
-                        initialized_attribute,
-                        old_initialized,
-                    )
+                    with self.assertRaisesRegex(
+                        ModuleNotFoundError, rf"stream2sentence\[{extra}\]",
+                    ):
+                        SentenceSplitter(tokenizer=tokenizer)
 
     def test_new_options_are_appended_after_032_positional_parameters(self):
         expected_tail = [
@@ -247,12 +233,33 @@ class TestSentenceGenerator(unittest.TestCase):
         "set STREAM2SENTENCE_RUN_STANZA_TESTS=1 to run slow Stanza integration tests",
     )
     def test_chinese(self):
-        text = "我喜欢读书。天气很好。我们去公园吧。今天是星期五。早上好。这是我的朋友。请帮我。吃饭了吗？我在学中文。晚安。"
-        #expected = ["我喜欢读书。", "天气很好。", "我们去公园吧。", "今天是星期五。", "早上好。", "这是我的朋友。", "请帮我。吃饭了吗？", "我在学中文。", "晚安。"]
-        #expected = ["我喜欢读书。", "天气很好。", "我们去公园吧。", "今天是星期五。", "早上好。", "这是我的朋友。", "请帮我。", "吃饭了吗？", "我在学中文。", "晚安。"]
-        expected = ["我喜欢读书。", "天气很好。", "我们去公园吧。", "今天是星期五。", "早上好。", "这是我的朋友。", "请帮我。吃饭了吗？我在学中文。", "晚安。"] # this changed with new stanza version
-        sentences = list(generate_sentences(text, minimum_sentence_length=2, context_size=2, tokenizer="stanza", language="zh"))
-        self.assertEqual(sentences, expected)    
+        text = (
+            "我喜欢读书。天气很好。我们去公园吧。今天是星期五。早上好。"
+            "这是我的朋友。请帮我。吃饭了吗？我在学中文。晚安。"
+        )
+        # Supported Stanza models differ on the last streaming boundary:
+        # 1.14 joins the tail; 1.15 splits it once the final words arrive.
+        expected_prefix = [
+            "我喜欢读书。",
+            "天气很好。",
+            "我们去公园吧。",
+            "今天是星期五。",
+            "早上好。",
+            "这是我的朋友。",
+            "请帮我。",
+            "吃饭了吗？",
+        ]
+        sentences = list(generate_sentences(
+            text,
+            minimum_sentence_length=2,
+            context_size=2,
+            tokenizer="stanza",
+            language="zh",
+        ))
+        self.assertIn(sentences, (
+            expected_prefix + ["我在学中文。晚安。"],
+            expected_prefix + ["我在学中文。", "晚安。"],
+        ))
 
     @unittest.skipUnless(
         RUN_STANZA_INTEGRATION,

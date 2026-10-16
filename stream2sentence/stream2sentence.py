@@ -8,6 +8,7 @@ import functools
 import importlib
 import logging
 import re
+import threading
 import time
 from dataclasses import dataclass
 from typing import (
@@ -28,14 +29,15 @@ from stream2sentence.quick_yield_boundary import HOLD, REJECT, SPLIT, get_bounda
 
 current_tokenizer = "rule-based"
 current_language = "en"
-stanza_initialized = False
+_stanza_pipelines = {}
+_stanza_lock = threading.Lock()
 nltk_initialized = False
-nlp = None
 
 _QUICK_YIELD_TERMINATORS = ".?!。！？؟।۔"
 _RULE_BASED_SENTENCE_TERMINATORS = frozenset(".?!。！？؟।۔")
 
-_QUICK_YIELD_CLOSING_MARKS = "\"')]}”’»›"
+_CJK_CLOSING_MARKS = "」』）】〕》〉"
+_QUICK_YIELD_CLOSING_MARKS = "\"')]}”’»›" + _CJK_CLOSING_MARKS
 _QUICK_YIELD_PRE_TERMINAL_CLOSING_MARKS = ")]}"
 
 
@@ -103,22 +105,19 @@ def initialize_nltk(language: str = "en", debug=False):
 
 
 def initialize_stanza(language: str = "en", offline=False):
+    """Return the cached Stanza pipeline for this language.
+
+    Construction is serialized so simultaneous requests do not download or
+    initialize the same model twice. Failed initialization is never cached.
     """
-    Initializes Stanza by downloading required data for sentence tokenization.
-    """
-    global nlp, stanza_initialized
-    if stanza_initialized:
-        return
-
-    logging.info("Initializing Stanza Tokenizer")
-
-    stanza = _load_optional_dependency("stanza", "stanza", "stanza")
-
-    if not offline:
-        stanza.download(language)
-
-    nlp = stanza.Pipeline(language, download_method=None)
-    stanza_initialized = True
+    with _stanza_lock:
+        if language not in _stanza_pipelines:
+            stanza = _load_optional_dependency("stanza", "stanza", "stanza")
+            if not offline:
+                stanza.download(language)
+            pipeline = stanza.Pipeline(language, download_method=None)
+            _stanza_pipelines[language] = pipeline
+        return _stanza_pipelines[language]
 
 
 def _remove_links(text: str) -> str:
@@ -240,8 +239,7 @@ def _tokenize_sentences(
                 never_split_numbers=never_split_numbers,
             )
         elif tokenizer == "stanza":
-            global nlp
-            doc = nlp(text)
+            doc = initialize_stanza(language)(text)
             sentences = [sentence.text for sentence in doc.sentences]
         else:
             raise ValueError(f"Unknown tokenizer: {tokenizer}")
@@ -274,7 +272,7 @@ def _rule_based_tokenize_sentences(
 ) -> list[str]:
     detector = get_boundary_detector(language, never_split_numbers)
     sentence_terminators = _RULE_BASED_SENTENCE_TERMINATORS
-    closing_marks = "\"')]}”’»›"
+    closing_marks = _QUICK_YIELD_CLOSING_MARKS
     sentences = []
     start = 0
     index = 0
@@ -355,9 +353,6 @@ def _sentences_from_boundary_offsets(text: str, offsets: list[int]) -> list[str]
     return sentences
 
 
-_CJK_CLOSING_MARKS = "」』）】〕》〉"
-
-
 def _nltk_cannot_see_boundary(
     text: str, offset: int, nltk_terminators: tuple[str, ...]
 ) -> bool:
@@ -370,6 +365,8 @@ def _nltk_cannot_see_boundary(
     """
     end = offset
     while end > 0 and text[end - 1] in _QUICK_YIELD_CLOSING_MARKS:
+        if text[end - 1] in _CJK_CLOSING_MARKS:
+            return False
         end -= 1
     start = end
     while start > 0 and text[start - 1] in _RULE_BASED_SENTENCE_TERMINATORS:
@@ -507,7 +504,7 @@ async def generate_sentences_async(
           boundaries accepted by both NLTK and the rule-based tokenizer, plus
           rule-based boundaries promoted by high-confidence local checks.
         language (str): The language to use for sentence tokenization.
-          Default is "en". Can be "multilingual" for stanze tokenizer.
+          Default is "en". Use a Stanza language code such as "en" or "zh".
         log_characters (bool): If True, logs each character to the console as
           they are processed.
         sentence_fragment_delimiters (str): A string of characters that are
@@ -691,7 +688,7 @@ class SentenceSplitter:
             boundaries accepted by both NLTK and the rule-based tokenizer, plus
             rule-based boundaries promoted by high-confidence local checks.
             language (str): The language to use for sentence tokenization.
-            Default is "en". Can be "multilingual" for stanze tokenizer.
+            Default is "en". Use a Stanza language code such as "en" or "zh".
             log_characters (bool): If True, logs each character to the console as
             they are processed.
             sentence_fragment_delimiters (str): A string of characters that are
@@ -730,32 +727,14 @@ class SentenceSplitter:
         making it versatile for different types of text processing applications.
         """
 
-        global current_tokenizer
-        current_tokenizer = _normalize_tokenizer(tokenizer)
-        init_tokenizer(current_tokenizer, language, debug=debug)
+        tokenizer = _normalize_tokenizer(tokenizer)
+        init_tokenizer(tokenizer, language, debug=debug)
 
         if fragment_lookahead_words < 0:
             raise ValueError("fragment_lookahead_words must be non-negative")
 
         self.input_buffer = collections.deque[str | AvailableTextRun]()
-        self.buffer = ""
-        self._buffer_has_rule_terminator = False
-        self.is_first_sentence = True
-        # Keep metadata on queued chunks until they are consumed. A cached
-        # lookahead decision applies only to the current unconsumed text;
-        # adding input or consuming a sentence/fragment invalidates it.
-        self._available_run_id = None
-        self._available_run_quick_yield = False
-        self._available_run_quick_yield_allowed = None
-        self._available_run_spans = None
-        self._available_run_buffer_offset = 0
-        self._available_run_chunk = None
-        self._available_run_remaining_start = 0
-        self.word_count = 0  # Initialize word count
-        self.last_delimiter_position = -1  # Position of last full sentence delimiter
-        self.pending_quick_yield_boundary = None
-        self.preferred_quick_yield_boundaries = []
-        self.fallback_quick_yield_boundaries = []
+        self._reset_stream_state()
 
         # Adjust quick yield flags based on settings
         if quick_yield_every_fragment:
@@ -776,7 +755,7 @@ class SentenceSplitter:
         self.cleanup_text_links = cleanup_text_links
         self.cleanup_text_emojis = cleanup_text_emojis
         self.tokenize_sentences = tokenize_sentences
-        self.tokenizer = current_tokenizer
+        self.tokenizer = tokenizer
         self.language = language
         self.quick_yield_boundary_detector = get_boundary_detector(
             language,
@@ -789,6 +768,29 @@ class SentenceSplitter:
         self.fragment_lookahead_words = fragment_lookahead_words
         self.filter_first_non_alnum_characters = filter_first_non_alnum_characters
         self.debug = debug
+
+    def _reset_stream_state(self):
+        """Clear text and boundary state while retaining configuration."""
+        self.buffer = ""
+        self._active_input_chunk = None
+        self._active_input_remaining_start = 0
+        self._buffer_has_rule_terminator = False
+        self.is_first_sentence = True
+        # Keep metadata on queued chunks until they are consumed. A cached
+        # lookahead decision applies only to the current unconsumed text;
+        # adding input or consuming a sentence/fragment invalidates it.
+        self._available_run_id = None
+        self._available_run_quick_yield = False
+        self._available_run_quick_yield_allowed = None
+        self._available_run_spans = None
+        self._available_run_buffer_offset = 0
+        self._available_run_chunk = None
+        self._available_run_remaining_start = 0
+        self.word_count = 0  # Initialize word count
+        self.last_delimiter_position = -1  # Position of last full sentence delimiter
+        self.pending_quick_yield_boundary = None
+        self.preferred_quick_yield_boundaries = []
+        self.fallback_quick_yield_boundaries = []
 
     def add(self, chunk: str | AvailableTextRun):
         """Queue a text chunk or an already-available snapshot for stream()."""
@@ -994,19 +996,18 @@ class SentenceSplitter:
         self._buffer_has_rule_terminator = any(
             mark in self.buffer for mark in _RULE_BASED_SENTENCE_TERMINATORS
         )
+        self._shift_quick_yield_boundaries(consumed_length)
+        if self.last_delimiter_position >= consumed_length:
+            self.last_delimiter_position -= consumed_length
+        else:
+            self.last_delimiter_position = -1
         if self.fragment_lookahead_words > 0:
-            self._shift_quick_yield_boundaries(consumed_length)
             self.word_count = sum(
                 char.isspace() or char in self.sentence_fragment_delimiters
                 for char in self.buffer
             )
-            if self.last_delimiter_position >= consumed_length:
-                self.last_delimiter_position -= consumed_length
-            else:
-                self.last_delimiter_position = -1
         else:
             self.word_count = 0
-            self.pending_quick_yield_boundary = None
 
         if self._available_run_id is not None:
             self._available_run_quick_yield = True
@@ -1017,8 +1018,31 @@ class SentenceSplitter:
         return _clean_text(text, self.cleanup_text_links, self.cleanup_text_emojis)
 
     def stream(self):
+        """Yield queued text, preserving unprocessed input if processing fails."""
+        try:
+            yield from self._stream_chunks()
+        except Exception:
+            queued = self._active_input_chunk
+            if queued is not None:
+                text = queued.text if isinstance(queued, AvailableTextRun) else queued
+                remaining = text[self._active_input_remaining_start:]
+                if remaining:
+                    if isinstance(queued, AvailableTextRun):
+                        remaining = AvailableTextRun(remaining, queued.run_id)
+                    self.input_buffer.appendleft(remaining)
+            self._available_run_chunk = None
+            self._available_run_remaining_start = 0
+            self._invalidate_available_run_lookahead()
+            raise
+        finally:
+            self._active_input_chunk = None
+            self._active_input_remaining_start = 0
+
+    def _stream_chunks(self):
         while self.input_buffer:
             queued_chunk = self.input_buffer.popleft()
+            self._active_input_chunk = queued_chunk
+            self._active_input_remaining_start = 0
             if isinstance(queued_chunk, AvailableTextRun):
                 chunk = queued_chunk.text
                 if self._available_run_id != queued_chunk.run_id:
@@ -1041,11 +1065,13 @@ class SentenceSplitter:
                     if len(self.buffer) == 0:
                         if self.filter_first_non_alnum_characters:
                             if not char.isalnum():
+                                self._active_input_remaining_start = char_index + 1
                                 self._consume_available_run_prefix(len(char))
                                 continue
 
                     extended_buffer = self.buffer + char
                     self.buffer = extended_buffer.lstrip()
+                    self._active_input_remaining_start = char_index + 1
                     if len(extended_buffer) != len(self.buffer):
                         self._consume_available_run_prefix(
                             len(extended_buffer) - len(self.buffer)
@@ -1341,18 +1367,14 @@ class SentenceSplitter:
                                 if (remaining_start >= 0
                                         and self.buffer == previous_buffer[remaining_start:]):
                                     self._consume_available_run_prefix(remaining_start)
+                                    self._shift_quick_yield_boundaries(remaining_start)
                                 else:
                                     # Whitespace normalization or custom token
-                                    # rewriting invalidates cached source offsets.
+                                    # rewriting invalidates every cached offset.
                                     self._invalidate_available_run_lookahead()
+                                    self._clear_quick_yield_boundaries()
 
                                 if self.fragment_lookahead_words > 0:
-                                    if remaining_start >= 0:
-                                        self._shift_quick_yield_boundaries(
-                                            remaining_start,
-                                        )
-                                    else:
-                                        self._clear_quick_yield_boundaries()
                                     self.word_count = sum(
                                         char.isspace()
                                         or char in self.sentence_fragment_delimiters
@@ -1364,42 +1386,45 @@ class SentenceSplitter:
 
             self._available_run_chunk = None
             self._available_run_remaining_start = 0
+            self._active_input_chunk = None
+            self._active_input_remaining_start = 0
 
     def flush(self):
-        # Yield remaining buffer as final sentence(s)
-        if self.buffer:
-            sentences = _tokenize_sentences(
-                self.buffer,
-                self.tokenize_sentences,
-                self.tokenizer,
-                self.language,
-                self.never_split_numbers,
+        """Drain queued input, yield the final tail, and reset for a new stream.
+
+        Exhaust this iterator before adding new input. Repeated flushes without
+        new input yield nothing. Tokenization errors leave the tail available
+        for a retry.
+        """
+        yield from self.stream()
+        sentences = _tokenize_sentences(
+            self.buffer,
+            self.tokenize_sentences,
+            self.tokenizer,
+            self.language,
+            self.never_split_numbers,
+        ) if self.buffer else []
+        separators = _sentence_separators(self.buffer, sentences)
+        self._reset_stream_state()
+        sentence_buffer = ""
+
+        for sentence, separator in zip(sentences, separators):
+            sentence_buffer += (separator if sentence_buffer else "") + sentence
+            if len(sentence_buffer) < self.minimum_sentence_length:
+                continue
+
+            yield_text = _clean_text(
+                sentence_buffer, self.cleanup_text_links, self.cleanup_text_emojis,
             )
+            if self.debug:
+                print(f"Debug: Yielding final sentence(s): {yield_text!r}")
+            yield yield_text
             sentence_buffer = ""
 
-            separators = _sentence_separators(self.buffer, sentences)
-            for sentence, separator in zip(sentences, separators):
-                sentence_buffer += (separator if sentence_buffer else "") + sentence
-                if len(sentence_buffer) < self.minimum_sentence_length:
-                    continue
-
-                yield_text = _clean_text(
-                    sentence_buffer, self.cleanup_text_links, self.cleanup_text_emojis
-                )
-
-                if self.debug:
-                    print("\033[36mDebug: Yielding final sentence(s): \"{}\"\033[0m".format(yield_text))
-
-                yield yield_text
-
-                sentence_buffer = ""
-
-            if sentence_buffer:
-                yield_text = _clean_text(
-                    sentence_buffer,
-                    self.cleanup_text_links,
-                    self.cleanup_text_emojis)
-                if self.debug:
-                    print("\033[36mDebug: Yielding remaining text: \"{}\"\033[0m".format(yield_text))
-
-                yield yield_text
+        if sentence_buffer:
+            yield_text = _clean_text(
+                sentence_buffer, self.cleanup_text_links, self.cleanup_text_emojis,
+            )
+            if self.debug:
+                print(f"Debug: Yielding remaining text: {yield_text!r}")
+            yield yield_text
