@@ -514,8 +514,12 @@ async def generate_sentences_async(
         force_first_fragment_after_words (int): The number of words after
           which the first sentence fragment is forced to be yielded.
           Default is 30 words.
-        filter_first_non_alnum_characters (bool): If True, filters out the
-          first non-alphanumeric characters from the text stream.
+        filter_first_non_alnum_characters (bool): If True, removes leading
+          non-alphanumeric characters from every emitted sentence or fragment
+          after other text cleanup. Outputs without alphanumeric characters
+          are omitted. Leading signs, currency symbols, and opening quotes
+          are removed; normalize meaningful prefixes first, e.g. -3 to
+          minus 3. Default is False.
         debug (bool): If True, enables debug mode for logging.
         auto_context (bool): If True, safe sentence boundaries may be yielded
           before the full context_size delay when the boundary detector and
@@ -698,8 +702,12 @@ class SentenceSplitter:
             force_first_fragment_after_words (int): The number of words after
             which the first sentence fragment is forced to be yielded.
             Default is 30 words.
-            filter_first_non_alnum_characters (bool): If True, filters out the
-            first non-alphanumeric characters from the text stream.
+            filter_first_non_alnum_characters (bool): If True, removes leading
+            non-alphanumeric characters from every emitted sentence or fragment
+            after other text cleanup. Outputs without alphanumeric characters
+            are omitted. Leading signs, currency symbols, and opening quotes
+            are removed; normalize meaningful prefixes first, e.g. -3 to
+            minus 3. Default is False.
             debug (bool): If True, enables debug mode for logging.
             auto_context (bool): If True, safe sentence boundaries may be
             yielded before the full context_size delay when the boundary detector
@@ -1017,10 +1025,22 @@ class SentenceSplitter:
 
         return _clean_text(text, self.cleanup_text_links, self.cleanup_text_emojis)
 
+    def _filter_output_prefix(self, text):
+        """Keep tokenization intact while preparing each emitted TTS chunk."""
+        if not self.filter_first_non_alnum_characters:
+            return text
+        for index, char in enumerate(text):
+            if char.isalnum():
+                return text[index:]
+        return ""
+
     def stream(self):
         """Yield queued text, preserving unprocessed input if processing fails."""
         try:
-            yield from self._stream_chunks()
+            for text in self._stream_chunks():
+                text = self._filter_output_prefix(text)
+                if text or not self.filter_first_non_alnum_characters:
+                    yield text
         except Exception:
             queued = self._active_input_chunk
             if queued is not None:
@@ -1062,13 +1082,6 @@ class SentenceSplitter:
                     self._available_run_chunk = chunk
                     self._available_run_remaining_start = char_index + 1
                 if char:
-                    if len(self.buffer) == 0:
-                        if self.filter_first_non_alnum_characters:
-                            if not char.isalnum():
-                                self._active_input_remaining_start = char_index + 1
-                                self._consume_available_run_prefix(len(char))
-                                continue
-
                     extended_buffer = self.buffer + char
                     self.buffer = extended_buffer.lstrip()
                     self._active_input_remaining_start = char_index + 1
@@ -1413,18 +1426,20 @@ class SentenceSplitter:
             if len(sentence_buffer) < self.minimum_sentence_length:
                 continue
 
-            yield_text = _clean_text(
+            yield_text = self._filter_output_prefix(_clean_text(
                 sentence_buffer, self.cleanup_text_links, self.cleanup_text_emojis,
-            )
+            ))
             if self.debug:
                 print(f"Debug: Yielding final sentence(s): {yield_text!r}")
-            yield yield_text
+            if yield_text or not self.filter_first_non_alnum_characters:
+                yield yield_text
             sentence_buffer = ""
 
         if sentence_buffer:
-            yield_text = _clean_text(
+            yield_text = self._filter_output_prefix(_clean_text(
                 sentence_buffer, self.cleanup_text_links, self.cleanup_text_emojis,
-            )
+            ))
             if self.debug:
                 print(f"Debug: Yielding remaining text: {yield_text!r}")
-            yield yield_text
+            if yield_text or not self.filter_first_non_alnum_characters:
+                yield yield_text

@@ -169,7 +169,10 @@ These parameters control how quickly and frequently the generator yields sentenc
   - Default: False
 
 - `filter_first_non_alnum_characters: bool = False`
-  - Discards non-alphanumeric characters at the start of an empty output buffer, including after a yield.
+  - When True, removes leading non-alphanumeric characters from every emitted sentence or sentence fragment, including quick yields and the final tail.
+  - Filtering runs after sentence splitting and the other text cleanup options. Outputs containing no alphanumeric characters are omitted; punctuation inside an output is preserved.
+  - Intended for TTS systems that require an alphanumeric first character. This is destructive: leading `-3` becomes `3`, `$5` becomes `5`, and opening quotes are removed. Normalize meaningful prefixes first, for example `-3` to `minus 3`.
+  - Default: False (preserves leading punctuation).
 
 ### Tokenization
 
