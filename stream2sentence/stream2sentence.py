@@ -130,9 +130,12 @@ def _remove_links(text: str) -> str:
     Returns:
         str: Text with links removed
     """
+    # A link runs to the next whitespace, but punctuation at its end belongs
+    # to the sentence (a full stop, or the bracket around the link), unless
+    # it closes a bracket opened inside the link, as in Wikipedia URLs.
     pattern = (
-        r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|"
-        r"[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
+        r"http[s]?://(?:\([^\s<>\"()]*\)|[^\s<>\"()])*"
+        r"(?:\([^\s<>\"()]*\)|[^\s<>\"'.,;:!?()\[\]{}])"
     )
 
     return re.sub(pattern, "", text)
