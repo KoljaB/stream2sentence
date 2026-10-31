@@ -14,26 +14,25 @@ delimiter_ignore_prefixes_global = []
 def get_index_or_last(a_list, index):
     return a_list[index] if index < len(a_list) else a_list[-1]
 
+def get_preceding_word(s, index):
+    # Opening punctuation is not part of the word: "(Dr." is still "Dr."
+    words = s[:index + 1].rsplit(None, 1)
+    return words[-1].lstrip("([{\"'“‘*_") if words else ""
+
 def find_last_delimiter(s, delimiters):
-    valid_indices = []
+    last_index = -1
     for delimiter in delimiters:
-        # Scan every occurrence of the delimiter, not just the last one. A
-        # trailing ignored abbreviation (e.g. "Dr. ") must not mask an earlier
-        # valid split point for the same delimiter.
-        search_start = 0
-        while True:
-            index = s.find(delimiter, search_start)
-            if index == -1:
+        # Walk back from the last occurrence of the delimiter. A trailing
+        # ignored abbreviation (e.g. "Dr. ") must not mask an earlier valid
+        # split point for the same delimiter.
+        index = s.rfind(delimiter)
+        while index > last_index:
+            if get_preceding_word(s, index) not in delimiter_ignore_prefixes_global:
+                last_index = index
                 break
-            search_start = index + 1
-            # Get the word preceding the delimiter
-            preceding_word_start = s.rfind(" ", 0, index)
-            preceding_word = s[preceding_word_start:index + 1].strip()
+            index = s.rfind(delimiter, 0, index + len(delimiter) - 1)
 
-            if preceding_word not in delimiter_ignore_prefixes_global:
-                valid_indices.append(index)
-
-    return max(valid_indices, default=-1)
+    return last_index
 
 def find_last_preferred_fragment_delimiter(s):
     return find_last_delimiter(s, preferred_sentence_fragment_delimiters_global)
