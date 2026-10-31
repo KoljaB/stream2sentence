@@ -1,12 +1,6 @@
-"""Regression tests for find_last_delimiter abbreviation masking.
-
-find_last_delimiter must not let a trailing ignored abbreviation (e.g. "Dr. ")
-hide an earlier, valid split point for the same delimiter. Before the fix it
-used s.rfind(delimiter), which only inspected the LAST occurrence of each
-delimiter; if that occurrence was an ignored abbreviation the whole delimiter
-was discarded and every earlier valid boundary was lost, suppressing the
-low-latency fragment yield this library exists to provide.
-"""
+"""find_last_delimiter must find valid split points, and only valid ones."""
+import unittest
+from unittest import mock
 
 import stream2sentence.stream2sentence_time_based as tb
 from stream2sentence.delimiter_ignore_prefixes import DELIMITER_IGNORE_PREFIXES
@@ -14,48 +8,63 @@ from stream2sentence.delimiter_ignore_prefixes import DELIMITER_IGNORE_PREFIXES
 PREFERRED = [". ", "? ", "! ", "\n"]
 
 
-def _setup():
-    # find_last_delimiter reads this module global (set by
-    # generate_sentences_time_based at runtime); populate it for direct tests.
-    tb.delimiter_ignore_prefixes_global = set(DELIMITER_IGNORE_PREFIXES)
+class FindLastDelimiterTests(unittest.TestCase):
+    def setUp(self):
+        # generate_sentences_time_based sets this global at runtime.
+        patcher = mock.patch.object(
+            tb, "delimiter_ignore_prefixes_global", set(DELIMITER_IGNORE_PREFIXES)
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def assert_split(self, text, expected):
+        index = tb.find_last_delimiter(text, PREFERRED)
+        self.assertEqual(text[:index + 1] if index != -1 else None, expected)
+
+    def test_trailing_abbreviation_does_not_mask_earlier_boundary(self):
+        cases = {
+            "stop here. ask Dr. Lee": "stop here.",
+            "done now. per Mr. Smith and Dr. Jones": "done now.",
+            "really? ask Dr. Lee": "really?",
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assert_split(text, expected)
+
+    def test_later_sentence_end_wins(self):
+        self.assert_split("Ask Mr. Lee now. then go on", "Ask Mr. Lee now.")
+        self.assert_split("One two. three four", "One two.")
+
+    def test_abbreviation_is_never_a_split_point(self):
+        cases = [
+            "See Dr. foo bar",
+            "Mr. Smith met Dr. Lee today",
+            "Dr. Lee and Mr. Smith arrived",
+            "ask (Dr. Lee and Mr. Smith arrived",
+            "ask [Dr. Lee and Mr. Smith arrived",
+            'he said "Dr. Lee and Mr. Smith agreed',
+            "he said “Dr. Lee and Mr. Smith agreed",
+            "ask **Dr. Lee and Mr. Smith arrived",
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                self.assert_split(text, None)
+
+    def test_newline_before_abbreviation(self):
+        self.assert_split("we met\nDr. Lee and Mr. Smith today", "we met\n")
+        self.assert_split("we met\tDr. Lee today", None)
+
+    def test_opening_punctuation_on_ordinary_word_still_splits(self):
+        self.assert_split("it ended (finally. then more", "it ended (finally.")
+
+    def test_no_delimiter_or_blank_text(self):
+        for text in ("", "no split point here", "\n"):
+            with self.subTest(text=text):
+                self.assertIn(tb.find_last_delimiter(text, PREFERRED), (-1, 0))
+
+    def test_overlapping_delimiter_occurrences(self):
+        self.assertEqual(tb.find_last_delimiter("a ***b", ["**"]), 3)
 
 
-def test_earlier_delimiter_not_masked_by_trailing_abbreviation():
-    _setup()
-    # "stop here. " is a valid sentence end; "Dr. " later is an ignored
-    # abbreviation. The valid boundary after "here" must still be found.
-    s = "stop here. ask Dr. Lee"
-    index = tb.find_last_delimiter(s, PREFERRED)
-    assert index == s.index(". "), index
-    assert s[: index + 1] == "stop here."
-
-
-def test_multiple_trailing_abbreviations_do_not_mask_earlier_boundary():
-    _setup()
-    s = "done now. per Mr. Smith and Dr. Jones"
-    index = tb.find_last_delimiter(s, PREFERRED)
-    assert s[: index + 1] == "done now."
-
-
-def test_real_sentence_end_after_abbreviation_still_wins():
-    _setup()
-    # A genuine later sentence end ("now. ") must still be preferred over the
-    # earlier one, and the abbreviation ("Mr. ") must remain ignored.
-    s = "Ask Mr. Lee now. then go on"
-    index = tb.find_last_delimiter(s, PREFERRED)
-    assert s[: index + 1] == "Ask Mr. Lee now."
-
-
-def test_abbreviation_only_still_returns_no_delimiter():
-    _setup()
-    # No valid boundary exists (only an ignored abbreviation); must stay -1 so
-    # the fix does not introduce a false split.
-    s = "See Dr. foo bar"
-    assert tb.find_last_delimiter(s, PREFERRED) == -1
-
-
-def test_single_valid_delimiter_unchanged():
-    _setup()
-    s = "One two. three four"
-    index = tb.find_last_delimiter(s, PREFERRED)
-    assert s[: index + 1] == "One two."
+if __name__ == "__main__":
+    unittest.main()
