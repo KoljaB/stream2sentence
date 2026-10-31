@@ -1028,7 +1028,19 @@ class SentenceSplitter:
             self._available_run_quick_yield = True
 
         if not self.quick_yield_every_fragment:
-            self.is_first_sentence = False
+            # A fast fragment can itself finish a sentence. Keep the next
+            # sentence eligible without treating every comma as a new sentence.
+            terminal = text.rstrip(" \t\r").rstrip(_QUICK_YIELD_CLOSING_MARKS)
+            end = len(terminal) - 1
+            self.is_first_sentence = bool(
+                self.quick_yield_for_all_sentences and terminal
+                and terminal[-1] in self.full_sentence_delimiters
+                and self.quick_yield_boundary_detector.classify(
+                    original_buffer, end,
+                    original_buffer[end + 1] if end + 1 < len(original_buffer) else None,
+                    allow_terminal_end=True,
+                ) == SPLIT
+            )
 
         return _clean_text(text, self.cleanup_text_links, self.cleanup_text_emojis)
 
@@ -1403,6 +1415,27 @@ class SentenceSplitter:
 
                                 # reset the last delimiter position after yielding
                                 self.last_delimiter_position = -1
+
+            # A bounded available run can finish at the whitespace before a
+            # still-streaming control tag. Release an already complete sentence
+            # without waiting for the next spoken word or flushing the stream.
+            if (isinstance(queued_chunk, AvailableTextRun)
+                    and self.quick_yield_single_sentence_fragment
+                    and (self.is_first_sentence or self.quick_yield_for_all_sentences)
+                    and self.fragment_lookahead_words == 0
+                    and self.buffer and self.buffer[-1].isspace()):
+                completed = self.buffer.rstrip()
+                terminal = completed.rstrip(_QUICK_YIELD_CLOSING_MARKS)
+                minimum = (self.minimum_first_fragment_length if self.is_first_sentence
+                           else self.minimum_sentence_length)
+                if (len(completed) > minimum and terminal
+                        and terminal[-1] in self.full_sentence_delimiters
+                        and self.quick_yield_boundary_detector.classify(
+                            self.buffer, len(terminal) - 1,
+                            self.buffer[len(terminal)],
+                            allow_terminal_end=True,
+                        ) == SPLIT):
+                    yield self._consume_quick_yield_text(len(completed) - 1)
 
             self._available_run_chunk = None
             self._available_run_remaining_start = 0
