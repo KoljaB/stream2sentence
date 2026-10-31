@@ -4,7 +4,7 @@
 - rearms quick yield for the next sentence after a fast fragment completes a sentence
 - applies leading character filtering to every output
 - `cleanup_text_links` keeps surrounding punctuation and text, and removes URL fragments (#20, #23)
-- time-based splitting finds earlier split points and recognises abbreviations after brackets, quotes and newlines (#22, #24)
+- time-based splitting finds earlier split points and recognises more abbreviations, including after brackets, quotes and newlines (#22, #24)
 
 # stream2sentence 1.1.0
 

@@ -50,6 +50,33 @@ class FindLastDelimiterTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assert_split(text, None)
 
+    def test_common_abbreviations_are_not_split_points(self):
+        cases = [
+            "see fig. 3 and Dr. Lee today",
+            "see figs. 3 and 4 today",
+            "pay approx. 5 to the shop",
+            "Approx. 5 people came today",
+            "ask Sen. Lee and Rep. Fox today",
+            "by Smith et al. in the journal",
+            "due Sept. 5 at the latest",
+            "the shop on Main Ln. near here",
+            "see eq. 2 and pp. 3 today",
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                self.assert_split(text, None)
+
+    def test_words_that_can_end_a_sentence_still_split(self):
+        cases = {
+            "he said no. then he left": "he said no.",
+            "we will miss. then go on": "we will miss.",
+            "turn it to max. then wait": "turn it to max.",
+            "pears, apples, etc. then more": "pears, apples, etc.",
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assert_split(text, expected)
+
     def test_newline_before_abbreviation(self):
         self.assert_split("we met\nDr. Lee and Mr. Smith today", "we met\n")
         self.assert_split("we met\tDr. Lee today", None)
