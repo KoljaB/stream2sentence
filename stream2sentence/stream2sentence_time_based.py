@@ -17,15 +17,22 @@ def get_index_or_last(a_list, index):
 def find_last_delimiter(s, delimiters):
     valid_indices = []
     for delimiter in delimiters:
-        index = s.rfind(delimiter)
-        if index != -1:
+        # Scan every occurrence of the delimiter, not just the last one. A
+        # trailing ignored abbreviation (e.g. "Dr. ") must not mask an earlier
+        # valid split point for the same delimiter.
+        search_start = 0
+        while True:
+            index = s.find(delimiter, search_start)
+            if index == -1:
+                break
+            search_start = index + 1
             # Get the word preceding the delimiter
             preceding_word_start = s.rfind(" ", 0, index)
             preceding_word = s[preceding_word_start:index + 1].strip()
-            
+
             if preceding_word not in delimiter_ignore_prefixes_global:
                 valid_indices.append(index)
-    
+
     return max(valid_indices, default=-1)
 
 def find_last_preferred_fragment_delimiter(s):
