@@ -133,9 +133,13 @@ def _remove_links(text: str) -> str:
     # A link runs to the next whitespace, but punctuation at its end belongs
     # to the sentence (a full stop, or the bracket around the link), unless
     # it closes a bracket opened inside the link, as in Wikipedia URLs.
+    # Non-ASCII characters, pipes and backticks also end a link, because text
+    # after it may have no space, as in Chinese, Japanese or Markdown tables.
+    stop = r"\s<>\"()|`\x80-\U0010FFFF"
+    bracketed = rf"\([^{stop}]*\)"
     pattern = (
-        r"http[s]?://(?:\([^\s<>\"()]*\)|[^\s<>\"()])*"
-        r"(?:\([^\s<>\"()]*\)|[^\s<>\"'.,;:!?()\[\]{}])"
+        rf"http[s]?://(?:{bracketed}|[^{stop}])*"
+        rf"(?:{bracketed}|[^{stop}'.,;:!?\[\]{{}}])"
     )
 
     return re.sub(pattern, "", text)
