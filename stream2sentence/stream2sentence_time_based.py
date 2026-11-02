@@ -173,7 +173,17 @@ def generate_sentences_time_based(
             has_output_started = True
         
         end_index = len(output)
-        if sentence_boundary_index != None and abs(end_index - sentence_boundary_index) <= 3:
+        if sentence_boundary_index != None and (
+            "".join(llm_buffer_full[:sentence_boundary_index].split())
+            == "".join(output.split())
+        ):
+            # The boundary found in the raw buffer is the authoritative cut
+            # point: it may sit further right than len(output) because joining
+            # sentences collapses the separator whitespace. Trust it whenever
+            # the consumed text matches the output apart from that whitespace,
+            # so repeated spaces or newlines between sentences cannot leave a
+            # trailing fragment behind to be re-emitted. A tokenizer that
+            # rewrites the content will not match and falls back to len(output).
             end_index = sentence_boundary_index
         llm_buffer_full = llm_buffer_full[end_index:]
         output_sentences.append(output)
