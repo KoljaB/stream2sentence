@@ -555,6 +555,22 @@ class TestSentenceGenerator(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertQuickYieldSingleSentence(text)
 
+    def test_quick_yield_keeps_rupee_abbreviation_with_its_amount(self):
+        cases = [
+            "The fee is Rs. 500 per month.",
+            "The price is Rs. 1,250.50 today.",
+            "The fine is Rs. 50 only.",
+            "The total is rs. 75 today.",
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertQuickYieldSingleSentence(text)
+
+        self.assertQuickYieldSentences(
+            "He was paid in Rs. Then he left.",
+            ["He was paid in Rs.", "Then he left."],
+        )
+
     def test_quick_yield_does_not_split_numeric_formats(self):
         cases = [
             "The value is 1,234,567 units today.",
