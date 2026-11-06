@@ -38,6 +38,7 @@ _EN_AMBIGUOUS_ABBREVIATIONS = {
     "no.",
     "p.",
     "plc.",
+    "rs.",
     "sun.",
     "u.s.",
     "u.s.a.",
@@ -191,6 +192,7 @@ _EN_EXTRA_ABBREVIATIONS = {
     "op. cit.",
     "plc.",
     "pty.",
+    "rs.",
     "jul.",
     "oct.",
 }
