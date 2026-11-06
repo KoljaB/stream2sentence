@@ -62,6 +62,8 @@ class FindLastDelimiterTests(unittest.TestCase):
             "the shop on Main Ln. near here",
             "see eq. 2 and pp. 3 today",
             "pay Rs. 500 to the shop",
+            "pay Re. 1 to the shop",
+            "pay Rp. 5000 to the shop",
         ]
         for text in cases:
             with self.subTest(text=text):

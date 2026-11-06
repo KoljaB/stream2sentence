@@ -30,7 +30,7 @@ dates_and_times = [
 financial_abbreviations = [
     "Inc.", "Ltd.", "Corp.", "PLC.", "LLC.", "LLP.",
     "P/E.", "EPS.", "NAV.", "ROI.", "ROA.", "ROE.",
-    "Rs.", "rs.",
+    "Rs.", "rs.", "Re.", "re.", "Rp.", "rp.",
 ]
 
 country_abbreviations = [

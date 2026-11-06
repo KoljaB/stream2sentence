@@ -561,6 +561,10 @@ class TestSentenceGenerator(unittest.TestCase):
             "The price is Rs. 1,250.50 today.",
             "The fine is Rs. 50 only.",
             "The total is rs. 75 today.",
+            "It costs Re. 1 only.",
+            "The stamp costs re. 1 today.",
+            "The price is Rp. 15.000 today.",
+            "The fare is Rp. 5000 per trip.",
         ]
         for text in cases:
             with self.subTest(text=text):
@@ -569,6 +573,10 @@ class TestSentenceGenerator(unittest.TestCase):
         self.assertQuickYieldSentences(
             "He was paid in Rs. Then he left.",
             ["He was paid in Rs.", "Then he left."],
+        )
+        self.assertQuickYieldSentences(
+            "He was paid in Rp. Then he left.",
+            ["He was paid in Rp.", "Then he left."],
         )
 
     def test_quick_yield_does_not_split_numeric_formats(self):
