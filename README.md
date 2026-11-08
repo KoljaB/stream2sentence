@@ -28,7 +28,7 @@ With the [recommended English setup](#recommended-english-setup), the sentence a
 
 https://github.com/user-attachments/assets/0428d806-4b30-47fa-9cfe-8fb42c95b2e4
 
-**How to read the video:** the demo feeds the text in one character at a time. A real LLM sends larger tokens (whole words or word pieces), and stream2sentence handles chunks of any size; single characters are simply the finest-grained case. When stream2sentence confirms a sentence, the line snaps into a finished sentence. The few characters that move down to the next line show how far it had to read past the period to be sure.
+**How to read the video:** the text is streamed in one character at a time, the finest-grained version of an LLM token stream. When stream2sentence confirms a sentence, the line snaps into a finished sentence. The few characters that move down to the next line show how far it had to read past the period to be sure.
 
 Every sentence in the demo is packed with traps for naive splitters: titles and initials (`Dr. A. J. Rivera`, `Mr. O'Neil`), decimals and versions (`3.14159`, `v2.0.0-beta.3`), URLs and e-mail addresses, IP addresses (`10.0.0.5:443`), legal citations (`Smith v. Jones`, `cf. Brown`), list markers (`a. setup, b. train`), and brand names with punctuation (`Yahoo! Finance`, `Guess?`). All 12 sentences come out exactly as expected, each released two characters after its real end.
 
