@@ -1,30 +1,79 @@
-# Real-Time Sentence Detection
+# stream2sentence
 
-Real-time processing and delivery of sentences from a continuous stream of characters or text chunks.
+Turn a stream of LLM tokens into complete sentences as soon as each one is finished, so text-to-speech can start talking right away.
 
-> **Hint:** *If you're interested in state-of-the-art voice solutions you might also want to <strong>have a look at [Linguflex](https://github.com/KoljaB/Linguflex)</strong>, the original project from which stream2sentence is spun off. It lets you control your environment by speaking and is one of the most capable and sophisticated open-source assistants currently available.*
+## Why you need this
+
+A voice assistant receives its answer from an LLM a few tokens at a time. Each simple way of handing that text to text-to-speech (TTS) has a problem:
+
+| Approach | Result |
+|---|---|
+| Wait for the full answer | Long silence before the assistant says anything |
+| Send each word to TTS | Choppy speech without natural intonation |
+| Split on every `.` `?` `!` | Breaks on `Dr.`, `3.14`, `U.S.`, `v2.0` or `e.g.` and speaks half-sentences |
+| **stream2sentence** | Hands TTS each sentence as soon as it is really finished |
+
+The hard part: when a `.` arrives, you cannot yet tell whether the sentence is over or whether it is `Dr.`, `3.` (followed by `14`) or `U.S.` (followed by `-only`). stream2sentence reads a few characters past each candidate period, decides, and then releases the sentence:
+
+```text
+Stream so far                      Decision
+"Dr."                              wait: could be a title
+"Dr. Smith measured 3."            wait: could be a decimal number
+"Dr. Smith measured 3.5 mm. T"     release "Dr. Smith measured 3.5 mm."
+```
+
+With the [recommended English setup](#recommended-english-setup), the sentence above is released two characters after its period: the space and the first letter of the next sentence.
 
 ## Demo
 
 https://github.com/user-attachments/assets/0428d806-4b30-47fa-9cfe-8fb42c95b2e4
 
-[CLI demo code (reproduces the video above)](tests/show_consensus_stress_split.py)
+**How to read the video:** text arrives one character at a time, the way LLM output does. When stream2sentence confirms a sentence, the line snaps into a finished sentence. The few characters that move down to the next line show how far it had to read past the period to be sure.
+
+Every sentence in the demo is packed with traps for naive splitters: titles and initials (`Dr. A. J. Rivera`, `Mr. O'Neil`), decimals and versions (`3.14159`, `v2.0.0-beta.3`), URLs and e-mail addresses, IP addresses (`10.0.0.5:443`), legal citations (`Smith v. Jones`, `cf. Brown`), list markers (`a. setup, b. train`), and brand names with punctuation (`Yahoo! Finance`, `Guess?`). All 12 sentences come out exactly as expected, each released two characters after its real end.
+
+Run it yourself (needs the `nltk` extra): [`python tests/show_consensus_stress_split.py`](tests/show_consensus_stress_split.py)
+
+## Quick start: LLM to TTS
+
+```bash
+pip install "stream2sentence[nltk]"
+```
+
+```python
+from stream2sentence import generate_sentences
+
+for sentence in generate_sentences(
+    llm_token_stream,                           # any iterator of text chunks
+    tokenizer="nltk+rule-based",                # recommended for English
+    auto_context=True,                          # release safe boundaries early
+    quick_yield_single_sentence_fragment=True,  # start speaking even sooner
+):
+    tts.speak(sentence)                         # your TTS engine
+```
+
+> **Want the whole pipeline ready-made?** [RealtimeTTS](https://github.com/KoljaB/RealtimeTTS) uses stream2sentence exactly this way: feed it an LLM stream and it speaks each sentence as soon as stream2sentence releases it.
 
 ## Table of Contents
 
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
+- [Which settings do I want?](#which-settings-do-i-want)
 - [Configuration](#configuration)
+- [Time based strategy](#time-based-strategy)
 - [Contributing](#contributing)
 - [License](#license)
 
 ## Features
 
-- Generates sentences from a stream of text in real-time.
-- Customizable to finetune/balance speed vs reliability.
-- Option to clean the output by removing links and emojis from the detected sentences.
-- Easy to configure and integrate.
+- Releases each sentence a few characters after it ends, so speech can start while the LLM is still writing.
+- Avoids false splits on abbreviations, initials, decimals, versions, URLs, citations and list markers.
+- Can release the first fragment of a reply early (for example at a comma) for faster first speech.
+- Accepts chunks of any size: single characters, tokens or longer pieces.
+- Synchronous, asynchronous and push-style (`SentenceSplitter`) APIs.
+- Built-in rule-based tokenizer with optional NLTK and Stanza support.
+- Optional cleanup of links and emojis before text reaches TTS.
 
 ## Installation
 
@@ -99,6 +148,13 @@ being released at the comma. Pass only text you already have; do not wait to
 fill a batch. Ordinary strings keep the existing behavior.
 
 See [the example and integration guide](docs/available-text-runs.md).
+
+## Which settings do I want?
+
+- **No extra dependencies:** the defaults (built-in rule-based tokenizer).
+- **Best English accuracy and lowest delay:** `tokenizer="nltk+rule-based"` with `auto_context=True` (needs the `nltk` extra).
+- **Speech should start sooner:** the `quick_yield_*` options under [Yield Control](#yield-control).
+- **Output paced to speaking speed:** the [time based strategy](#time-based-strategy).
 
 ## Configuration
 
@@ -278,21 +334,6 @@ two full sentences ahead of the target it will output a sentence even if it's ah
   - For example, if it takes your TTS engine around 1 second to generate 10 words, you can use a value of 0.1 so that the TTS generation time is included in the deadline. 
   - Applied to first n sentences, last value applied to all subsequent
 
-## Release checks
-
-From a source checkout, use an activated virtual environment:
-
-```bash
-python -m pip install -e ".[all]" build twine
-python tools/run_release_checks.py
-python -m build
-python -m twine check --strict dist/stream2sentence-1.1.0*
-```
-
-The runner checks dependencies, runs all unit tests with real NLTK and Stanza integrations enabled, and runs four timing scenarios. It fails on any failed or skipped test, missing output, text mismatch, or timing outside the allowed tolerance. First use needs network access for model data; the full run takes several minutes. The two live LLM API examples are manual demos and are not part of this automated suite. On Windows, `tests/run_test.bat` runs the same checks using the project virtual environment when present.
-
-Passing these checks is release evidence, not a claim of complete code coverage or bug-free behavior. See [the 1.1.0 release notes](RELEASE_NOTES.md).
-
 ## Contributing
 
 Any Contributions you make are welcome and **greatly appreciated**.
@@ -302,6 +343,8 @@ Any Contributions you make are welcome and **greatly appreciated**.
 3. **Commit** your Changes (`git commit -m 'Add some AmazingFeature'`).
 4. **Push** to the Branch (`git push origin feature/AmazingFeature`).
 5. **Open** a Pull Request.
+
+Before a release, run the [release checks](docs/release-checks.md).
 
 ## License
 
