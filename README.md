@@ -348,7 +348,7 @@ Before a release, run the [release checks](docs/release-checks.md).
 
 ## License
 
-This project is licensed under the MIT License. For more details, see the [`LICENSE`](LICENSE) file.
+This project is licensed under the Apache License 2.0; see the [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) files. Releases up to and including 1.1.2 were published under the MIT License.
 
 ---
 
