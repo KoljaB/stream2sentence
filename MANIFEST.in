@@ -1,4 +1,5 @@
 prune tests
 include LICENSE
+include NOTICE
 include RELEASE_NOTES.md
 include docs/available-text-runs.md
