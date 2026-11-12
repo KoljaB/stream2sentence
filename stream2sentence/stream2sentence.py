@@ -445,6 +445,7 @@ async def generate_sentences_async(
     context_size_look_overhead: int = 12,
     minimum_sentence_length: int = 10,
     minimum_first_fragment_length=10,
+    minimum_later_fragment_length=0,
     quick_yield_single_sentence_fragment: bool = False,
     quick_yield_for_all_sentences: bool = False,
     quick_yield_every_fragment: bool = False,
@@ -489,6 +490,15 @@ async def generate_sentences_async(
         minimum_first_fragment_length (int): The minimum number of characters
           required for the first sentence fragment before yielding.
           Default is 10 characters.
+        minimum_later_fragment_length (int): Once something has been yielded,
+          a quick fragment that ends inside a sentence (on a comma, semicolon,
+          colon, dash or bracket) needs at least this many characters. The
+          first output of a stream is cut early so speech can start; after
+          that every cut inside a sentence costs prosody, because each
+          fragment is synthesized on its own. Sentence ends are not affected.
+          With 80, a later sentence is yielded whole unless it runs past 80
+          characters, and then it is cut at the first such mark after them.
+          0 (default) keeps `minimum_first_fragment_length` for every fragment.
         quick_yield_single_sentence_fragment (bool): If set to True, the
           generator will yield the first sentence first fragment as quickly as
           possible. This is particularly useful for real-time applications
@@ -558,6 +568,7 @@ async def generate_sentences_async(
         context_size_look_overhead=context_size_look_overhead,
         minimum_sentence_length=minimum_sentence_length,
         minimum_first_fragment_length=minimum_first_fragment_length,
+        minimum_later_fragment_length=minimum_later_fragment_length,
         quick_yield_single_sentence_fragment=quick_yield_single_sentence_fragment,
         quick_yield_for_all_sentences=quick_yield_for_all_sentences,
         quick_yield_every_fragment=quick_yield_every_fragment,
@@ -638,6 +649,7 @@ class SentenceSplitter:
         context_size_look_overhead: int = 12,
         minimum_sentence_length: int = 10,
         minimum_first_fragment_length=10,
+    minimum_later_fragment_length=0,
         quick_yield_single_sentence_fragment: bool = False,
         quick_yield_for_all_sentences: bool = False,
         quick_yield_every_fragment: bool = False,
@@ -677,6 +689,11 @@ class SentenceSplitter:
             minimum_first_fragment_length (int): The minimum number of characters
             required for the first sentence fragment before yielding.
             Default is 10 characters.
+            minimum_later_fragment_length (int): Once something has been yielded,
+            a quick fragment that ends inside a sentence (on a comma, semicolon,
+            colon, dash or bracket) needs at least this many characters.
+            Sentence ends are not affected. 0 (default) keeps
+            `minimum_first_fragment_length` for every fragment.
             quick_yield_single_sentence_fragment (bool): If set to True, the
             generator will yield the first sentence first fragment as quickly as
             possible. This is particularly useful for real-time applications
@@ -762,6 +779,7 @@ class SentenceSplitter:
         self.context_size_look_overhead = context_size_look_overhead
         self.minimum_sentence_length = minimum_sentence_length
         self.minimum_first_fragment_length = minimum_first_fragment_length
+        self.minimum_later_fragment_length = max(0, int(minimum_later_fragment_length or 0))
         self.quick_yield_single_sentence_fragment = quick_yield_single_sentence_fragment
         self.quick_yield_for_all_sentences = quick_yield_for_all_sentences
         self.quick_yield_every_fragment = quick_yield_every_fragment
@@ -791,6 +809,9 @@ class SentenceSplitter:
         self._active_input_remaining_start = 0
         self._buffer_has_rule_terminator = False
         self.is_first_sentence = True
+        # True once this stream has yielded anything: from then on a cut inside a
+        # sentence needs minimum_later_fragment_length characters.
+        self._has_yielded = False
         # Keep metadata on queued chunks until they are consumed. A cached
         # lookahead decision applies only to the current unconsumed text;
         # adding input or consuming a sentence/fragment invalidates it.
@@ -894,6 +915,19 @@ class SentenceSplitter:
         self._available_run_quick_yield_allowed = allowed
         return allowed
 
+    def _too_short_for_later_fragment(self, boundary_position):
+        """True when a cut at this mark would be an early cut inside a later sentence.
+
+        Only marks that do not end a sentence count (comma, semicolon, colon, dash,
+        bracket), and only after the stream's first output.
+        """
+        return (
+            self.minimum_later_fragment_length > 0
+            and self._has_yielded
+            and not self._is_quick_yield_terminal(boundary_position)
+            and boundary_position + 1 <= self.minimum_later_fragment_length
+        )
+
     def _quick_yield_boundary_end(self, boundary_position):
         boundary_end = boundary_position
         if self._is_quick_yield_terminal(boundary_position):
@@ -927,6 +961,8 @@ class SentenceSplitter:
             boundary_end = self._quick_yield_boundary_end(boundary_position)
 
         if boundary_end + 1 <= self.minimum_first_fragment_length:
+            return
+        if self._too_short_for_later_fragment(boundary_position):
             return
 
         if self.buffer[boundary_position] in self.full_sentence_delimiters:
@@ -1007,6 +1043,7 @@ class SentenceSplitter:
             self.buffer = remainder.lstrip()
             consumed_length = len(original_buffer) - len(self.buffer)
 
+        self._has_yielded = True
         self._consume_available_run_prefix(consumed_length)
         self._buffer_has_rule_terminator = any(
             mark in self.buffer for mark in _RULE_BASED_SENTENCE_TERMINATORS
@@ -1144,6 +1181,10 @@ class SentenceSplitter:
                             )
                             if action != HOLD:
                                 self.pending_quick_yield_boundary = None
+                            if action == SPLIT and self._too_short_for_later_fragment(
+                                boundary_position
+                            ):
+                                action = REJECT
                             if action == SPLIT:
                                 if self.fragment_lookahead_words > 0:
                                     self._remember_quick_yield_boundary(
@@ -1199,6 +1240,8 @@ class SentenceSplitter:
 
                         if self.buffer[-1] in self.sentence_fragment_delimiters:
                             boundary_position = len(self.buffer) - 1
+                            if self._too_short_for_later_fragment(boundary_position):
+                                continue
                             action = self.quick_yield_boundary_detector.classify(
                                 self.buffer,
                                 boundary_position,
@@ -1250,6 +1293,11 @@ class SentenceSplitter:
                         if (
                             char.isspace()
                             and force_word_count >= self.force_first_fragment_after_words
+                            and not (
+                                self.minimum_later_fragment_length > 0
+                                and self._has_yielded
+                                and len(self.buffer) <= self.minimum_later_fragment_length
+                            )
                         ):
                             word_count = force_word_count
                             yield_text = self._consume_quick_yield_text()
@@ -1372,6 +1420,7 @@ class SentenceSplitter:
 
                                     yield yield_text
                                     self.word_count = 0
+                                    self._has_yielded = True
 
                                 if self.quick_yield_for_all_sentences:
                                     self.is_first_sentence = True

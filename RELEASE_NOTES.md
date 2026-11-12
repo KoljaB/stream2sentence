@@ -1,3 +1,7 @@
+# stream2sentence 1.1.3 (unreleased)
+
+- `minimum_later_fragment_length`: after a stream's first output, a quick fragment inside a sentence needs that many characters, so later sentences are spoken whole instead of being cut at their first comma. Off by default.
+
 # stream2sentence 1.1.2
 
 - keeps the rupee and rupiah abbreviations `Rs.`, `Re.` and `Rp.` with the amount after them (#29)

@@ -197,6 +197,8 @@ The `generate_sentences()` function offers various parameters to fine-tune its b
 
 These parameters control how quickly and frequently the generator yields sentence fragments:
 
+- `minimum_later_fragment_length: int = 0`
+  Once a stream has yielded something, a quick fragment that ends inside a sentence (on a comma, semicolon, colon, dash or bracket) needs at least this many characters. The first output is cut early so speech can start; after that every cut inside a sentence costs prosody, because a TTS engine speaks each fragment on its own. With `80`, later sentences come whole unless they run past 80 characters. Sentence ends are not affected. `0` keeps the first-fragment rule for every sentence.
 - `quick_yield_single_sentence_fragment: bool = False`
   - When True, yields the first fragment of the first sentence as quickly as possible.
   - Useful for getting immediate output in real-time applications like speech synthesis.
