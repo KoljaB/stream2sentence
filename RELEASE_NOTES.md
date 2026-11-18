@@ -1,6 +1,7 @@
-# stream2sentence 1.1.3 (unreleased)
+# stream2sentence 1.1.3
 
 - `minimum_later_fragment_length`: after a stream's first output, a quick fragment inside a sentence needs that many characters, so later sentences are spoken whole instead of being cut at their first comma. Off by default.
+- relicensed under the Apache License 2.0; releases up to and including 1.1.2 stay under the MIT License (#30)
 
 # stream2sentence 1.1.2
 
